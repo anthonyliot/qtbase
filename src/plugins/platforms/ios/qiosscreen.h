@@ -15,6 +15,8 @@
 
 QT_BEGIN_NAMESPACE
 
+struct QAppleFrameRateRange;
+
 class QIOSScreen : public QObject, public QPlatformScreen
 {
     Q_OBJECT
@@ -53,7 +55,9 @@ public:
 
 private:
     static void initializeScreens();
-    void deliverUpdateRequests() const;
+    void deliverUpdateRequests(CADisplayLink *displayLink) const;
+    void updateDisplayLinkFrameRate() const;
+    void setDisplayLinkFrameRate(const QAppleFrameRateRange &range) const;
 
     bool shouldPauseDisplayLinkWhenInactive() const;
 
@@ -69,6 +73,7 @@ private:
 #endif
     QSizeF m_physicalSize;
     CADisplayLink *m_displayLink = nullptr;
+    mutable bool m_deliveringUpdateRequests = false;
 
     friend class QIOSIntegration;
 };
