@@ -274,8 +274,8 @@ QCocoaWindow::~QCocoaWindow()
 
     // Disposing of the view and window should have resulted in an
     // expose event with isExposed=false, but just in case we try
-    // to stop the display link here as well.
-    static_cast<QCocoaScreen *>(screen())->maybeStopDisplayLink();
+    // to pause the display link here as well.
+    static_cast<QCocoaScreen *>(screen())->maybePauseDisplayLink();
 }
 
 QSurfaceFormat QCocoaWindow::format() const
@@ -1699,9 +1699,9 @@ void QCocoaWindow::windowDidChangeScreen()
         currentScreen->requestUpdate();
     }
     // If there are no exposed windows left on the previous screen
-    // we can stop its display link if it was running.
+    // we can pause its display link if it was running.
     if (previousScreen)
-        previousScreen->maybeStopDisplayLink();
+        previousScreen->maybePauseDisplayLink();
 }
 
 // ----------------------- NSWindowDelegate callbacks -----------------------
@@ -1792,7 +1792,7 @@ void QCocoaWindow::handleExposeEvent(const QRegion &region)
         return;
 
     if (!isExposed())
-        static_cast<QCocoaScreen *>(screen())->maybeStopDisplayLink();
+        static_cast<QCocoaScreen *>(screen())->maybePauseDisplayLink();
 }
 
 // --------------------------------------------------------------------------
@@ -1893,7 +1893,7 @@ void QCocoaWindow::requestUpdate()
 
 bool QCocoaWindow::updatesWithDisplayLink() const
 {
-    // Update via CVDisplayLink if Vsync is enabled
+    // Update via the display link if Vsync is enabled
     return format().swapInterval() != 0;
 }
 

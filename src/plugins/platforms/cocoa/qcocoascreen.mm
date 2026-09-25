@@ -22,6 +22,15 @@
 #include <QtCore/private/qcore_mac_p.h>
 #include <QtCore/private/qeventdispatcher_cf_p.h>
 
+#include <QuartzCore/CADisplayLink.h>
+
+// clang-format off
+QT_DECLARE_NAMESPACED_OBJC_INTERFACE(QCocoaDisplayLinkTarget, NSObject
+- (instancetype)initWithScreen:(QT_PREPEND_NAMESPACE(QCocoaScreen) *)screen;
+- (void)displayLinkDidFire:(CADisplayLink *)displayLink;
+)
+// clang-format on
+
 QT_BEGIN_NAMESPACE
 
 namespace CoreGraphics {
@@ -198,9 +207,7 @@ QCocoaScreen::~QCocoaScreen()
 
     delete m_cursor;
 
-    CVDisplayLinkRelease(m_displayLink);
-    if (m_displayLinkSource)
-         dispatch_release(m_displayLinkSource);
+    invalidateDisplayLink();
 }
 
 void QCocoaScreen::update(CGDirectDisplayID displayId)
@@ -208,6 +215,14 @@ void QCocoaScreen::update(CGDirectDisplayID displayId)
     if (displayId != m_displayId) {
         qCDebug(lcQpaScreen) << "Reconnecting" << this << "as display" << displayId;
         m_displayId = displayId;
+
+        // The display link is tied to the NSScreen of the old display, so
+        // recreate it, making sure we don't strand pending update requests.
+        if (m_displayLink) {
+            invalidateDisplayLink();
+            if (hasPendingUpdateRequests())
+                requestUpdate();
+        }
     }
 
     Q_ASSERT(isOnline());
@@ -274,29 +289,31 @@ bool QCocoaScreen::requestUpdate()
         return false;
     }
 
-    // Track how many update requests we have queued, so that we
-    // know whether the display-link thread should try to deliver
-    // update requests, or if it can bail out early.
-    ++m_pendingUpdateRequests;
-
     if (!m_displayLink) {
+        NSScreen *nsScreen = nativeScreen();
+        if (!nsScreen) {
+            qCWarning(lcQpaScreenUpdates)
+                    << "No NSScreen for" << this << "- can't create display link";
+            return false;
+        }
+
         qCDebug(lcQpaScreenUpdates) << "Creating display link for" << this;
-        if (CVDisplayLinkCreateWithCGDisplay(m_displayId, &m_displayLink) != kCVReturnSuccess) {
+
+        // The display link retains its target, and the target doesn't retain us,
+        // so we invalidate the display link before the screen goes away.
+        auto *target = [[[QCocoaDisplayLinkTarget alloc] initWithScreen:this] autorelease];
+        m_displayLink = [[nsScreen displayLinkWithTarget:target
+                                                selector:@selector(displayLinkDidFire:)] retain];
+        if (!m_displayLink) {
             qCWarning(lcQpaScreenUpdates) << "Failed to create display link for" << this;
             return false;
         }
-        if (auto displayId = CVDisplayLinkGetCurrentCGDisplay(m_displayLink); displayId != m_displayId) {
-            qCWarning(lcQpaScreenUpdates) << "Unexpected display" << displayId << "for display link";
-            CVDisplayLinkRelease(m_displayLink);
-            m_displayLink = nullptr;
-            return false;
-        }
-        CVDisplayLinkSetOutputCallback(m_displayLink, [](CVDisplayLinkRef, const CVTimeStamp*,
-            const CVTimeStamp*, CVOptionFlags, CVOptionFlags*, void* displayLinkContext) -> int {
-                // FIXME: It would be nice if update requests would include timing info
-                static_cast<QCocoaScreen*>(displayLinkContext)->deliverUpdateRequests();
-                return kCVReturnSuccess;
-        }, this);
+
+        // Unlike CVDisplayLink, the callback is delivered on the run loop the display
+        // link is added to, so there's no need to marshal it over to the main thread.
+        // Use the common modes, so that we keep delivering update requests during
+        // event tracking (live resize, menus) and modal sessions.
+        [m_displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 
         // During live window resizing -[NSWindow _resizeWithEvent:] will spin a local event loop
         // in event-tracking mode, dequeuing only the mouse drag events needed to update the window's
@@ -304,8 +321,8 @@ bool QCocoaScreen::requestUpdate()
         // and will then update the frame (effectively coalescing/compressing the events). Unfortunately
         // the events are pulled out using -[NSApplication nextEventMatchingEventMask:untilDate:inMode:dequeue:]
         // which internally uses CFRunLoopRunSpecific, so the event loop will also process GCD queues and other
-        // runloop sources that have been added to the tracking mode. This includes the GCD display-link
-        // source that we use to marshal the display-link callback over to the main thread. If the
+        // runloop sources that have been added to the tracking mode. This includes the display-link
+        // source that we use to deliver update requests. If the
         // subsequent delivery of the update-request on the main thread stalls due to inefficient
         // user code, the NSEventThread will have had time to deliver additional mouse drag events,
         // and the logic in -[NSWindow _resizeWithEvent:] will keep on compressing events and never
@@ -347,167 +364,120 @@ bool QCocoaScreen::requestUpdate()
         Q_UNUSED(eventTap);
     }
 
-    if (!CVDisplayLinkIsRunning(m_displayLink)) {
-        qCDebug(lcQpaScreenUpdates) << "Starting display link for" << this;
-        CVDisplayLinkStart(m_displayLink);
+    if (m_displayLink.paused) {
+        qCDebug(lcQpaScreenUpdates) << "Resuming display link for" << this;
+        m_displayLink.paused = NO;
     }
 
     return true;
 }
 
-// Helper to allow building up debug output in multiple steps
-struct DeferredDebugHelper
-{
-    DeferredDebugHelper(const QLoggingCategory &cat) {
-        if (cat.isDebugEnabled())
-            debug = new QDebug(QMessageLogger().debug(cat).nospace());
-    }
-    ~DeferredDebugHelper() {
-        flushOutput();
-    }
-    void flushOutput() {
-        if (debug) {
-            delete debug;
-            debug = nullptr;
-        }
-    }
-    QDebug *debug = nullptr;
-};
-
-#define qDeferredDebug(helper) if (Q_UNLIKELY(helper.debug)) *helper.debug
-
 void QCocoaScreen::deliverUpdateRequests()
 {
+    Q_ASSERT(NSThread.isMainThread);
+
     if (!isOnline()) {
         qCDebug(lcQpaScreenUpdates) << this << "is not online. Ignoring update request delivery";
         return;
     }
 
+    // Delivering an update request might spin a nested event loop,
+    // which could result in the display link firing again.
+    if (m_deliveringUpdateRequests) {
+        qCDebug(lcQpaScreenUpdates) << "Skipping recursive display link callback for" << this;
+        return;
+    }
+    QScopedValueRollback recursionGuard(m_deliveringUpdateRequests, true);
+
     QMacAutoReleasePool pool;
 
-    // The CVDisplayLink callback is a notification that it's a good time to produce a new frame.
-    // Since the callback is delivered on a separate thread we have to marshal it over to the
-    // main thread, as Qt requires update requests to be delivered there. This needs to happen
-    // asynchronously, as otherwise we may end up deadlocking if the main thread calls back
-    // into any of the CVDisplayLink APIs.
-    if (!NSThread.isMainThread) {
-        // We're explicitly not using the data of the GCD source to track the pending updates,
-        // as the data isn't reset to 0 until after the event handler, and also doesn't update
-        // during the event handler, both of which we need to track late frames.
-        const int pendingUpdates = ++m_pendingDisplayLinkUpdates;
+    qCDebug(lcQpaScreenUpdates) << "Display link callback for" << this;
 
-        const int pendingUpdateRequests = m_pendingUpdateRequests;
+    bool hasPendingUpdateRequests = false;
 
-        DeferredDebugHelper screenUpdates(lcQpaScreenUpdates());
-        qDeferredDebug(screenUpdates) << "display link callback for screen " << m_displayId
-            << " with " << pendingUpdateRequests << " pending update requests";
+    auto windows = QGuiApplication::allWindows();
+    for (int i = 0; i < windows.size(); ++i) {
+        QWindow *window = windows.at(i);
+        if (window->screen() != screen())
+            continue;
 
-        if (const int framesAheadOfDelivery = pendingUpdates - 1) {
-            // If we have more than one update pending it means that a previous display link callback
-            // has not been fully processed on the main thread, either because GCD hasn't delivered
-            // it on the main thread yet, because the processing of the update request is taking
-            // too long, or because the update request was deferred due to window live resizing.
-            qDeferredDebug(screenUpdates) << ", " << framesAheadOfDelivery << " frame(s) ahead";
-        }
+        QPointer<QCocoaWindow> platformWindow = static_cast<QCocoaWindow *>(window->handle());
+        if (!platformWindow)
+            continue;
 
-        if (!pendingUpdateRequests) {
-            // There's a cost to stopping and starting the display link thread,
-            // so once started we always keep it running, to avoid missing frames.
-            // In the case where we don't have any pending update requests we don't
-            // need to signal the main thread.
-            qDeferredDebug(screenUpdates) << "; skipping signaling dispatch source";
-            m_pendingDisplayLinkUpdates = 0;
-            return;
-        }
+        if (!platformWindow->hasPendingUpdateRequest())
+            continue;
 
-        qDeferredDebug(screenUpdates) << "; signaling dispatch source";
+        // Skip windows that are not doing update requests via display link
+        if (!platformWindow->updatesWithDisplayLink())
+            continue;
 
-        if (!m_displayLinkSource) {
-            m_displayLinkSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_DATA_ADD, 0, 0, dispatch_get_main_queue());
-            dispatch_source_set_event_handler(m_displayLinkSource, ^{
-                deliverUpdateRequests();
-            });
-            dispatch_resume(m_displayLinkSource);
-        }
+        platformWindow->deliverUpdateRequest();
 
-        dispatch_source_merge_data(m_displayLinkSource, 1);
+        // platform window can be destroyed in deliverUpdateRequest()
+        if (!platformWindow)
+            continue;
 
-    } else {
-        DeferredDebugHelper screenUpdates(lcQpaScreenUpdates());
-        qDeferredDebug(screenUpdates) << "gcd event handler on main thread";
+        // The update request delivery could result in another request
+        // from the window, or the platform window could decide to not
+        // deliver the request at this time.
+        if (platformWindow->hasPendingUpdateRequest())
+            hasPendingUpdateRequests = true;
+    }
 
-        const int pendingUpdates = m_pendingDisplayLinkUpdates;
-        if (pendingUpdates > 1)
-            qDeferredDebug(screenUpdates) << ", " << (pendingUpdates - 1) << " frame(s) behind display link";
-
-        screenUpdates.flushOutput();
-
-        int pendingUpdateRequests = 0;
-
-        auto windows = QGuiApplication::allWindows();
-        for (int i = 0; i < windows.size(); ++i) {
-            QWindow *window = windows.at(i);
-            if (window->screen() != screen())
-                continue;
-
-            QPointer<QCocoaWindow> platformWindow = static_cast<QCocoaWindow*>(window->handle());
-            if (!platformWindow)
-                continue;
-
-            if (!platformWindow->hasPendingUpdateRequest())
-                continue;
-
-            // Skip windows that are not doing update requests via display link
-            if (!platformWindow->updatesWithDisplayLink())
-                continue;
-
-            platformWindow->deliverUpdateRequest();
-
-            // platform window can be destroyed in deliverUpdateRequest()
-            if (!platformWindow)
-                continue;
-
-            // The update request delivery could result in another request
-            // from the window, or the platform window could decide to not
-            // deliver the request at this time.
-            if (platformWindow->hasPendingUpdateRequest())
-                ++pendingUpdateRequests;
-        }
-
-        m_pendingUpdateRequests = pendingUpdateRequests;
-
-        if (const int missedUpdates = m_pendingDisplayLinkUpdates.fetchAndStoreRelaxed(0) - pendingUpdates) {
-            qCWarning(lcQpaScreenUpdates) << "main thread missed" << missedUpdates
-                << "update(s) from display link during update request delivery";
-        }
+    if (!hasPendingUpdateRequests && m_displayLink) {
+        // Unlike a CVDisplayLink there's no thread to stop and start, so
+        // pausing and resuming is cheap, and avoids waking up the main
+        // thread for every display refresh when nothing is animating.
+        qCDebug(lcQpaScreenUpdates)
+                << "No pending update requests. Pausing display link for" << this;
+        m_displayLink.paused = YES;
     }
 }
 
-void QCocoaScreen::maybeStopDisplayLink()
+bool QCocoaScreen::hasPendingUpdateRequests() const
 {
-    if (!CVDisplayLinkIsRunning(m_displayLink))
-        return;
-
     const auto windows = QGuiApplication::allWindows();
     for (auto *window : windows) {
         if (window->screen() != screen())
             continue;
 
-        QPointer<QCocoaWindow> platformWindow = static_cast<QCocoaWindow*>(window->handle());
+        auto *platformWindow = static_cast<QCocoaWindow *>(window->handle());
         if (!platformWindow)
             continue;
 
-        if (window->isExposed())
-            return;
-
+        // We intentionally don't check updatesWithDisplayLink() here, as
+        // that needs a fully constructed platform window. Timer based
+        // requests will at most keep the display link running one more
+        // frame, as deliverUpdateRequests() does take it into account.
         if (platformWindow->hasPendingUpdateRequest())
-            return;
+            return true;
     }
-
-    qCDebug(lcQpaScreenUpdates) << "Stopping display link for" << this;
-    CVDisplayLinkStop(m_displayLink);
+    return false;
 }
 
+void QCocoaScreen::maybePauseDisplayLink()
+{
+    if (!m_displayLink || m_displayLink.paused)
+        return;
+
+    if (hasPendingUpdateRequests())
+        return;
+
+    qCDebug(lcQpaScreenUpdates) << "Pausing display link for" << this;
+    m_displayLink.paused = YES;
+}
+
+void QCocoaScreen::invalidateDisplayLink()
+{
+    if (!m_displayLink)
+        return;
+
+    qCDebug(lcQpaScreenUpdates) << "Invalidating display link for" << this;
+    [m_displayLink invalidate];
+    [m_displayLink release];
+    m_displayLink = nullptr;
+}
 
 // -----------------------------------------------------------
 
@@ -947,6 +917,26 @@ QDebug operator<<(QDebug debug, const QCocoaScreen *screen)
 QT_END_NAMESPACE
 
 #include "qcocoascreen.moc"
+
+@implementation QCocoaDisplayLinkTarget {
+    QT_PREPEND_NAMESPACE(QCocoaScreen) * m_screen;
+}
+
+- (instancetype)initWithScreen:(QT_PREPEND_NAMESPACE(QCocoaScreen) *)screen
+{
+    if ((self = [super init]))
+        m_screen = screen;
+    return self;
+}
+
+- (void)displayLinkDidFire:(CADisplayLink *)displayLink
+{
+    Q_UNUSED(displayLink);
+    // FIXME: It would be nice if update requests would include timing info
+    m_screen->deliverUpdateRequests();
+}
+
+@end
 
 @implementation NSScreen (QtExtras)
 

@@ -11,10 +11,11 @@
 #include <QtCore/private/qcore_mac_p.h>
 
 #include <CoreGraphics/CoreGraphics.h>
-#include <CoreVideo/CoreVideo.h>
 
 #import <AppKit/NSScreen.h>
 #import <Foundation/NSArray.h>
+
+Q_FORWARD_DECLARE_OBJC_CLASS(CADisplayLink);
 
 QT_BEGIN_NAMESPACE
 
@@ -96,12 +97,12 @@ private:
     qreal m_devicePixelRatio = 0;
     qreal m_rotation = 0;
 
-    CVDisplayLinkRef m_displayLink = nullptr;
-    dispatch_source_t m_displayLinkSource = nullptr;
-    QAtomicInt m_pendingUpdateRequests;
-    QAtomicInt m_pendingDisplayLinkUpdates;
+    CADisplayLink *m_displayLink = nullptr;
+    bool m_deliveringUpdateRequests = false;
 
-    void maybeStopDisplayLink();
+    bool hasPendingUpdateRequests() const;
+    void maybePauseDisplayLink();
+    void invalidateDisplayLink();
 
     friend class QCocoaIntegration;
     friend class QCocoaWindow;
