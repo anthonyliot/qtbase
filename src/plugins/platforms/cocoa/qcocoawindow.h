@@ -8,6 +8,7 @@
 #include <qpa/qplatformwindow.h>
 #include <qpa/qplatformwindow_p.h>
 #include <QtGui/private/qwindow_p.h>
+#include <QtGui/private/qappleframerate_p.h>
 #include <QRect>
 #include <QPointer>
 
@@ -113,6 +114,7 @@ public:
     void requestUpdate() override;
     bool updatesWithDisplayLink() const;
     void deliverUpdateRequest() override;
+    QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }
 
     void requestActivateWindow() override;
 
@@ -265,6 +267,7 @@ public: // for QNSView
     NSInteger m_alertRequest = NoAlertRequest;
 
     bool m_deliveringUpdateRequest = false;
+    QAppleFrameRatePreference m_frameRatePreference;
 
     bool m_isEmbedded = false;
     void updateEmbeddedState();
