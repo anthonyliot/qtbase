@@ -795,6 +795,9 @@ void QPlatformWindow::requestUpdate()
         }
     }
 
+    // Timer based update requests are not paced to the display
+    qt_window_private(window())->updateRequestInterval = 0;
+
     // Start or restart the timer (in case we're called during update
     // request delivery).
     d->updateTimer.start(updateInterval, Qt::PreciseTimer, window());

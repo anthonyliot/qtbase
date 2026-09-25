@@ -169,6 +169,14 @@ double QAppleFrameRateRange::frameInterval() const noexcept
     return 1.0 / rate;
 }
 
+// Deliver on the display link frame closest to the requested interval.
+// This matches what CoreAnimation does when asked for a rate that is not
+// a divisor of the refresh rate (it rounds to the nearest supported rate).
+static double pacingTolerance(double linkFrameInterval)
+{
+    return std::max(linkFrameInterval / 2, 0.0005);
+}
+
 bool QAppleFrameRateRange::shouldDeliverFrame(double lastTargetTimestamp, double targetTimestamp,
                                               double linkFrameInterval) const noexcept
 {
@@ -180,11 +188,21 @@ bool QAppleFrameRateRange::shouldDeliverFrame(double lastTargetTimestamp, double
     if (targetTimestamp < lastTargetTimestamp)
         return true;
 
-    // Deliver on the display link frame closest to the requested interval.
-    // This matches what CoreAnimation does when asked for a rate that is not
-    // a divisor of the refresh rate (it rounds to the nearest supported rate).
-    const double tolerance = std::max(linkFrameInterval / 2, 0.0005);
-    return targetTimestamp - lastTargetTimestamp >= interval - tolerance;
+    return targetTimestamp - lastTargetTimestamp >= interval - pacingTolerance(linkFrameInterval);
+}
+
+double QAppleFrameRateRange::effectiveFrameInterval(double linkFrameInterval) const noexcept
+{
+    const double interval = frameInterval();
+    if (linkFrameInterval <= 0)
+        return interval;
+    if (interval <= 0)
+        return linkFrameInterval;
+
+    // The smallest number of display link frames that shouldDeliverFrame() waits for
+    const double tolerance = pacingTolerance(linkFrameInterval);
+    const double frames = std::ceil((interval - tolerance) / linkFrameInterval - 1e-6);
+    return std::max(1.0, frames) * linkFrameInterval;
 }
 
 #ifndef QT_NO_DEBUG_STREAM

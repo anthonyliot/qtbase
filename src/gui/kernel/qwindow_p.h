@@ -154,6 +154,11 @@ public:
     bool blockedByModalWindow = false;
 
     bool updateRequestPending = false;
+    // The expected interval in seconds between consecutive update requests,
+    // for platforms that pace them (e.g. to the display refresh and the
+    // window's preferred frame rate). Updated before each delivery, or 0 if
+    // unknown. Allows Qt Quick to advance animations by the actual frame time.
+    double updateRequestInterval = 0;
     bool transientParentPropertySet = false;
 
     QPointer<QWindow> transientParent;

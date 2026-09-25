@@ -69,6 +69,11 @@ struct Q_GUI_EXPORT QAppleFrameRateRange
     bool shouldDeliverFrame(double lastTargetTimestamp, double targetTimestamp,
                             double linkFrameInterval) const noexcept;
 
+    // The interval in seconds between the frames that shouldDeliverFrame() lets
+    // through when the display link fires every linkFrameInterval seconds, i.e.
+    // the frame interval the window will actually see.
+    double effectiveFrameInterval(double linkFrameInterval) const noexcept;
+
     friend constexpr bool operator==(const QAppleFrameRateRange &a,
                                      const QAppleFrameRateRange &b) noexcept
     {
@@ -107,6 +112,10 @@ public:
     void frameDelivered(double targetTimestamp) noexcept
     {
         m_lastTargetTimestamp = targetTimestamp;
+    }
+    double effectiveFrameInterval(double linkFrameInterval) const noexcept
+    {
+        return m_range.effectiveFrameInterval(linkFrameInterval);
     }
 
     static QAppleFrameRateRange environmentDefault();

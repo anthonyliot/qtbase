@@ -45,6 +45,7 @@ private slots:
     void frameInterval();
     void pacing_data();
     void pacing();
+    void effectiveFrameInterval();
     void preferenceFromWindowProperty();
 };
 
@@ -237,10 +238,33 @@ void tst_QAppleFrameRate::pacing()
     }
     QCOMPARE(delivered, expectedFramesPerSecond);
 
+    // The effective frame interval matches what the pacing lets through
+    const double effectiveInterval = range.effectiveFrameInterval(linkInterval);
+    QCOMPARE(qRound(1.0 / effectiveInterval), expectedFramesPerSecond);
+
     // Time going backwards always delivers
     QVERIFY(range.shouldDeliverFrame(2000.0, 1000.0, linkInterval));
     // First frame always delivers
     QVERIFY(range.shouldDeliverFrame(0, 1000.0, linkInterval));
+}
+
+void tst_QAppleFrameRate::effectiveFrameInterval()
+{
+    // Unknown display link interval
+    QCOMPARE(Range().effectiveFrameInterval(0), 0.0);
+    QCOMPARE(Range(30, 30, 30).effectiveFrameInterval(0), 1.0 / 30);
+    // No preference follows the display link
+    QCOMPARE(Range().effectiveFrameInterval(1.0 / 240), 1.0 / 240);
+    // Faster than the display link is capped by it
+    QCOMPARE(Range(1000, 1000, 1000).effectiveFrameInterval(1.0 / 60), 1.0 / 60);
+    // Exact divisors
+    QCOMPARE(Range(30, 30, 30).effectiveFrameInterval(1.0 / 240), 8.0 / 240);
+    QCOMPARE(Range(24, 24, 24).effectiveFrameInterval(1.0 / 240), 10.0 / 240);
+    // Not divisors, rounded up to the next faster rate like CoreAnimation does
+    QCOMPARE(Range(24, 24, 24).effectiveFrameInterval(1.0 / 60), 2.0 / 60);
+    QCOMPARE(Range(100, 100, 100).effectiveFrameInterval(1.0 / 240), 2.0 / 240);
+    // Display link already slowed down to the window's rate
+    QCOMPARE(Range(30, 30, 30).effectiveFrameInterval(1.0 / 30), 1.0 / 30);
 }
 
 void tst_QAppleFrameRate::preferenceFromWindowProperty()
