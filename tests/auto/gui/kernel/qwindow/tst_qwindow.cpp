@@ -122,6 +122,8 @@ private slots:
     void preferredFrameRate();
     void preferredFrameRateMixedWindows();
     void preferredFrameRateRuntimeChange();
+    void preferredFrameRateUpdateRequestInterval_data();
+    void preferredFrameRateUpdateRequestInterval();
     void preferredFrameRateInvalid_data();
     void preferredFrameRateInvalid();
     void activateDeactivateEvent();
@@ -3260,6 +3262,7 @@ public:
     int updateRequests = 0;
     bool allOnMainThread = true;
     bool animating = false;
+    double lastUpdateRequestInterval = 0;
 
     void startAnimating()
     {
@@ -3274,6 +3277,7 @@ protected:
         if (event->type() == QEvent::UpdateRequest) {
             ++updateRequests;
             allOnMainThread &= QThread::isMainThread();
+            lastUpdateRequestInterval = QWindowPrivate::get(this)->updateRequestInterval;
             if (animating)
                 requestUpdate();
         }
@@ -3550,6 +3554,54 @@ void tst_QWindow::preferredFrameRateRuntimeChange()
 
     window.setProperty("_q_preferredFrameRateRange", QVariant());
     QCOMPARE_RATE(measureUpdateRates({ &window }).first(), refreshRate);
+}
+
+void tst_QWindow::preferredFrameRateUpdateRequestInterval_data()
+{
+    QTest::addColumn<QVariant>("preference");
+    QTest::addColumn<double>("requestedRate");
+
+    QTest::newRow("default") << QVariant() << 0.0;
+    QTest::newRow("30") << QVariant(30) << 30.0;
+    QTest::newRow("24") << QVariant(24) << 24.0;
+    QTest::newRow("60") << QVariant(60) << 60.0;
+}
+
+void tst_QWindow::preferredFrameRateUpdateRequestInterval()
+{
+    REQUIRE_DISPLAY_PACED_UPDATES();
+    QFETCH(QVariant, preference);
+    QFETCH(double, requestedRate);
+
+    AnimatingWindow window;
+    window.setProperty("_q_preferredFrameRateRange", preference);
+    showAnimatingWindow(window, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    const double refreshRate = window.screen()->refreshRate();
+    if (requestedRate > refreshRate)
+        QSKIP("Screen refresh rate too low for this test");
+
+    // The window knows the frame interval it's being paced at, e.g. so
+    // that animations can advance by the right amount per frame.
+    const double rate = measureUpdateRates({ &window }).first();
+    const double expectedInterval = 1.0 / achievableRate(refreshRate, requestedRate);
+    QVERIFY2(qAbs(window.lastUpdateRequestInterval - expectedInterval) < expectedInterval * 0.05,
+             qPrintable(u"Interval %1 s, expected %2 s"_s.arg(window.lastUpdateRequestInterval)
+                                .arg(expectedInterval)));
+    // And it's consistent with the measured rate
+    QCOMPARE_RATE(rate, 1.0 / window.lastUpdateRequestInterval);
+
+    // Timer based updates don't have a known interval
+    window.destroy();
+    QSurfaceFormat format;
+    format.setSwapInterval(0);
+    window.setFormat(format);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    measureUpdateRates({ &window }, 200);
+    QCOMPARE(window.lastUpdateRequestInterval, 0.0);
 }
 
 void tst_QWindow::preferredFrameRateInvalid_data()

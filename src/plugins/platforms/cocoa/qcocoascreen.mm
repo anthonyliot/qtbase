@@ -427,6 +427,8 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
         frameRatePreference.update(window);
         if (frameRatePreference.shouldDeliverFrame(targetTimestamp, frameInterval)) {
             frameRatePreference.frameDelivered(targetTimestamp);
+            qt_window_private(window)->updateRequestInterval =
+                    frameRatePreference.effectiveFrameInterval(frameInterval);
             platformWindow->deliverUpdateRequest();
 
             // platform window can be destroyed in deliverUpdateRequest()
