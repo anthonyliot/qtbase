@@ -178,6 +178,28 @@ display-bound. With a 60 fps cap, frames that take longer than 16.7 ms wait for 
 which gives 40-56 fps. That's what a real 60 Hz display does too; a Release build should hold 60.
 The billed-energy figures were too noisy at 1 s granularity to report for this app.
 
+Real app 2: cool-retro-term 2.0.0-beta2 (`1394ce82`, Qt Quick + FrameAnimation-driven CRT shaders),
+qmake build against `../qt5-build-nofw` plus qt5compat. Local changes in
+`bench/cool-retro-term-local.patch`: no QtSql in this Qt build, so `Storage.qml` is an in-memory
+stub (settings don't persist); `effectsFrameSkip` 3 → 1 so effects update every frame (otherwise a
+30 fps cap would update them at 10 Hz); and `noiseSource` moved from binding 0 to 4 in
+`terminal_dynamic.{vert,frag}`. The last one is a real app bug: it duplicates the uniform block's
+binding 0, which QRhi only rejects in Debug Qt builds (`qrhi.cpp` `#ifndef QT_NO_DEBUG`), and the
+app then crashed after "Failed to build srb". Worth reporting upstream.
+
+Script: `bench/crt-ab.sh`. Only 4 of 15 runs were valid (the window wasn't frontmost in the others,
+as the machine was in use), so n=1 per row:
+
+| Scenario | Plugin | fps | CPU % | wakeups/s |
+|---|---|---|---|---|
+| running, default | old | 142.6 | 23.1 | 404 |
+| running, env 60 | old (ignored) | 154.8 | 21.8 | 419 |
+| running, default | new | 150.0 | 18.2 | 239 |
+| running, env 60 | new | 58.1 | 8.3 | 134 |
+
+GPU time isn't included in these CPU figures, and it's this app's main cost. Rerun
+`bench/crt-ab.sh` with the machine idle for more samples and the 30 fps case.
+
 Not verified yet (needs hands-on or more builds):
 
 * Live window resize with the kept event-tap workaround, moving windows between displays,

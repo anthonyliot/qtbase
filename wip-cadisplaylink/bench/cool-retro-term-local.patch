@@ -1,0 +1,135 @@
+diff --git a/app/app.pro b/app/app.pro
+index 685fdc1..7fb5944 100644
+--- a/app/app.pro
++++ b/app/app.pro
+@@ -1,4 +1,4 @@
+-QT += qml quick widgets sql quickcontrols2
++QT += qml quick widgets quickcontrols2
+ TARGET = cool-retro-term
+ APP_VERSION = $$system(git -C $$PWD/.. describe --tags --always --dirty=-dirty)
+ isEmpty(APP_VERSION): APP_VERSION = "unknown"
+diff --git a/app/qml/ApplicationSettings.qml b/app/qml/ApplicationSettings.qml
+index 9dbd4e9..f7a74a0 100644
+--- a/app/qml/ApplicationSettings.qml
++++ b/app/qml/ApplicationSettings.qml
+@@ -45,7 +45,7 @@ QtObject {
+     property bool showTerminalSize: true
+     property real windowScaling: 1.0
+ 
+-    property int effectsFrameSkip: 3
++    property int effectsFrameSkip: 1
+     property bool verbose: false
+ 
+     property real bloomQuality: 0.5
+diff --git a/app/qml/Storage.qml b/app/qml/Storage.qml
+index 1f2014f..8d65c99 100644
+--- a/app/qml/Storage.qml
++++ b/app/qml/Storage.qml
+@@ -18,72 +18,16 @@
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *******************************************************************************/
+ 
+-import QtQuick 2.2
+-import QtQuick.LocalStorage 2.0
++import QtQuick
+ 
++// Local benchmark build: in-memory settings instead of QtQuick.LocalStorage, as the Qt build
++// used here has no QtSql. Settings don't persist between launches.
+ QtObject {
+-    readonly property string dbMajorVersion: "2"
+-    readonly property string dbMinorVersion: "1.0"
+-    property bool initialized: false
++    property bool initialized: true
++    property var _settings: ({})
+ 
+-    function getDatabase() {
+-         return LocalStorage.openDatabaseSync("coolretroterm" + dbMajorVersion, dbMinorVersion, "StorageDatabase", 100000)
+-    }
+-
+-    function initialize() {
+-        var db = getDatabase();
+-        db.transaction(
+-            function(tx) {
+-                tx.executeSql('CREATE TABLE IF NOT EXISTS settings(setting TEXT UNIQUE, value TEXT)');
+-            }
+-        )
+-
+-        initialized = true
+-    }
+-
+-    function setSetting(setting, value) {
+-        if(!initialized) initialize();
+-
+-        var db = getDatabase();
+-        var res = "";
+-        db.transaction(
+-            function(tx) {
+-                var rs = tx.executeSql('INSERT OR REPLACE INTO settings VALUES (?,?);', [setting,value]);
+-                //console.log(rs.rowsAffected)
+-                if (rs.rowsAffected > 0) {
+-                    res = "OK";
+-                } else {
+-                    res = "Error";
+-                }
+-           }
+-      )
+-      // The function returns “OK” if it was successful, or “Error” if it wasn't
+-      return res
+-    }
+-
+-    function getSetting(setting) {
+-        if(!initialized) initialize();
+-        var db = getDatabase();
+-        var res = "";
+-        db.transaction(
+-            function(tx) {
+-                var rs = tx.executeSql('SELECT value FROM settings WHERE setting=?;', [setting]);
+-                if (rs.rows.length > 0) {
+-                res = rs.rows.item(0).value;
+-                } else {
+-                res = undefined;
+-                }
+-            }
+-        )
+-        return res
+-    }
+-
+-    function dropSettings(){
+-        var db = getDatabase();
+-        db.transaction(
+-            function(tx) {
+-                tx.executeSql('DROP TABLE settings');
+-            }
+-        )
+-    }
++    function initialize() {}
++    function setSetting(setting, value) { _settings[setting] = value; return "OK" }
++    function getSetting(setting) { return _settings.hasOwnProperty(setting) ? _settings[setting] : undefined }
++    function dropSettings() { _settings = ({}) }
+ }
+diff --git a/app/shaders/terminal_dynamic.frag b/app/shaders/terminal_dynamic.frag
+index ea48c74..5f59312 100644
+--- a/app/shaders/terminal_dynamic.frag
++++ b/app/shaders/terminal_dynamic.frag
+@@ -46,7 +46,7 @@ layout(std140, binding = 0) uniform ubuf {
+     float bloom;
+ };
+ 
+-layout(binding = 0) uniform sampler2D noiseSource;
++layout(binding = 4) uniform sampler2D noiseSource;
+ layout(binding = 1) uniform sampler2D screenBuffer;
+ layout(binding = 2) uniform sampler2D burnInSource;
+ layout(binding = 3) uniform sampler2D frameSource;
+diff --git a/app/shaders/terminal_dynamic.vert b/app/shaders/terminal_dynamic.vert
+index c81be91..316d706 100644
+--- a/app/shaders/terminal_dynamic.vert
++++ b/app/shaders/terminal_dynamic.vert
+@@ -29,7 +29,7 @@ layout(std140, binding = 0) uniform ubuf {
+     float bloom;
+ };
+ 
+-layout(binding = 0) uniform sampler2D noiseSource;
++layout(binding = 4) uniform sampler2D noiseSource;
+ 
+ layout(location = 0) out vec2 qt_TexCoord0;
+ layout(location = 1) out float vBrightness;
