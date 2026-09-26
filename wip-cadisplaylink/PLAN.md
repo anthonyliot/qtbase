@@ -120,6 +120,64 @@ Results:
   simulator was booted. The system lowered the panel rate. The default-rate expectations depend on
   what else is on screen, so treat those as potentially flaky on shared CI machines.
 
+Hands-on checks (2026-09-25, 240 Hz Odyssey G95SC, A/B by swapping `libqcocoa.dylib` in the
+build and verifying the loaded binary's UUID; `QT_QPA_PLATFORM_PLUGIN_PATH` does not override the
+build's own plugin directory, so an earlier A/B round that relied on it was discarded):
+
+* Live resize (synthetic drags, 3 trials per variant, light and 8 ms/frame rendering): no difference
+  between old, new, and new without the event-tap workaround. The synthetic harness sometimes
+  misses the resize handle in every variant. A manual check with a real mouse is still worth doing.
+* Display reconfiguration 240 → 120 → 60 → 240 Hz while animating: old and new both follow
+  the refresh rate, with no frame gaps while exposed (2 trials each).
+* Sleep/wake: skipped, screen lock is set to "immediate".
+* Stall soak, 80 runs per plugin: old 15 and new 13 runs stopped animating, **all** of them after
+  macOS reported the window occluded (Qt stops painting non-exposed windows, and
+  `QPaintDeviceWindow::update()` doesn't request updates while not exposed). No stalls while exposed
+  in either plugin. One earlier new-plugin run stalled while reported exposed and wasn't reproduced
+  again: still unexplained.
+
+Benefit, manual test window 640x360 (`proc_pid_rusage`, 8 s windows, mean of 3 trials):
+
+| Scenario | Plugin | fps | CPU % | wakeups/s | energy mW |
+|---|---|---|---|---|---|
+| animating, default | old | 240.0 | 35.3 | 435 | 17.1 |
+| animating, default | new | 239.9 | 35.0 | 462 | 11.7 |
+| animating, env 60 | old (ignored) | 240.0 | 35.4 | 430 | 17.4 |
+| animating, env 60 | new | 60.0 | 12.2 | 68 | 4.2 |
+| animating, env 30 | old (ignored) | 240.0 | 31.4 | 427 | 18.3 |
+| animating, env 30 | new | 30.0 | 6.9 | 35 | 2.8 |
+| idle after animating | old | 0 | 0.4 | 245 | 1.9 |
+| idle after animating | new | 0 | 0.1 | 5 | 0.7 |
+| 3 ms/frame, default | old | 240.0 | 90.2 | 241 | 12.9 |
+| 3 ms/frame, default | new | 239.0 | 89.5 | 317 | 13.4 |
+| 3 ms/frame, env 60 | old (ignored) | 240.0 | 89.4 | 241 | 10.6 |
+| 3 ms/frame, env 60 | new | 59.5 | 26.4 | 103 | 4.4 |
+
+The idle row is the benefit of the port by itself: the CVDisplayLink thread kept waking 240 times
+a second for as long as a window was exposed, even with nothing animating. The capped rows are the
+benefit of the frame-rate preference. The panel's own refresh rate doesn't change on this display
+(fixed 240/120/60 Hz modes, no adaptive sync), so all the savings are app-side work.
+
+Real app: Qt Quick Effect Maker (qtquickeffectmaker, Debug build against `../qt5-build-nofw`),
+Wiggly example project, one window, plugin swapped per run (UUID verified), 10 s samples.
+Script: `bench/qqem-ab.sh`. Runs where the window wasn't frontmost/visible were skipped (5), and one
+run that stopped rendering during sampling (0 fps, 0% CPU) was discarded.
+
+| Scenario | Plugin | runs | fps | CPU % | wakeups/s |
+|---|---|---|---|---|---|
+| idle (preview paused) | old | 3 | 0 | 0.3 | 242 |
+| idle (preview paused) | new | 2 | 0 | 0.05 | 1 |
+| playing, default | old | 2 | 94.6 / 112.3 | 42 / 26 | 374 / 377 |
+| playing, default | new | 2 | 85.6 / 107.4 | 39 / 26 | 266 / 167 |
+| playing, env 60 | old (ignored) | 1 | 91.6 | 41.6 | 369 |
+| playing, env 60 | new | 2 | 40.4 / 56.2 | 22 / 16 | 189 |
+| playing, env 30 | new | 3 | 27.9 | 8.4 | 95 |
+
+The Debug build renders this effect at ~100 fps at most, so the default rate is app-bound, not
+display-bound. With a 60 fps cap, frames that take longer than 16.7 ms wait for the next 60 Hz slot,
+which gives 40-56 fps. That's what a real 60 Hz display does too; a Release build should hold 60.
+The billed-energy figures were too noisy at 1 s granularity to report for this app.
+
 Not verified yet (needs hands-on or more builds):
 
 * Live window resize with the kept event-tap workaround, moving windows between displays,

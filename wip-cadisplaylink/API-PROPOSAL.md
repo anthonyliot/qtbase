@@ -51,6 +51,11 @@ Mapping:
 Also expose on `QQuickWindow` (inherits), plus QML `Window.preferredFrameRateRange`, and Qt Quick
 could set it automatically when only low-rate animations run (future).
 
+Related existing mechanism: `layer.live` toggling (qtdeclarative example
+`itemvariablerefreshrate`) re-renders an item's layer only every Nth frame, but the window
+still renders at the display rate, so it doesn't reduce wakeups or display-link rate. A per-item
+rate hint that feeds into the window's preferred range would combine the two.
+
 Open questions for review:
 * Should `QSurfaceFormat` carry it? No: it's not a surface property and it changes at runtime.
 * Should there be an application-wide default (`QGuiApplication::setDefaultFrameRateRange`)?
