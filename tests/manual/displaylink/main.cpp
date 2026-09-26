@@ -17,18 +17,32 @@
 //  - Live resize, moving between screens, minimize/restore keep animating
 //  - Instruments > Animation Hitches / Display: the display actually lowers its
 //    refresh rate when all animating windows ask for less
+//
+// For automated runs:
+//   --log              print updates/s, refresh rate and size every 250 ms
+//   --preset <n>       start with preset n
+//   --position <x,y>   initial window position
+//   --pause-after <s>  stop animating after s seconds (to measure idle cost)
+//   --quit-after <s>   quit after s seconds
+//   --busy-ms <ms>     spend ms milliseconds of CPU time per frame, like a heavy renderer
+//   --on-top           keep the window above others, so it isn't occluded (occluded
+//                      windows are not exposed, and stop painting)
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QRasterWindow>
 #include <QtGui/QScreen>
+#include <QtCore/QCommandLineParser>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QTimer>
 #include <QtCore/QList>
 #include <QtCore/QVariant>
 
 #include <cmath>
+#include <cstdio>
 #include <deque>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -60,10 +74,55 @@ public:
         m_clock.start();
     }
 
+    double updateRate() const
+    {
+        return m_frameTimes.size() > 1
+                ? (m_frameTimes.size() - 1) * 1e9 / (m_frameTimes.back() - m_frameTimes.front())
+                : 0;
+    }
+
+    void setAnimating(bool animating)
+    {
+        m_animating = animating;
+        m_frameTimes.clear();
+        update();
+    }
+
+    void setBusyTime(int ms) { m_busyMs = ms; }
+    int takeFrameCount() { return std::exchange(m_frameCount, 0); }
+    QString takeEventCounts()
+    {
+        const QString counts =
+                u"updreq=%1 expose=%2 unexposed=%3 lostupdates=%4"_s.arg(m_updateRequests)
+                        .arg(m_exposes)
+                        .arg(m_unexposes)
+                        .arg(m_lostUpdates);
+        m_updateRequests = m_exposes = m_unexposes = m_lostUpdates = 0;
+        return counts;
+    }
+
+    void setPreset(int index)
+    {
+        m_preset = index;
+        setProperty("_q_preferredFrameRateRange", presets.at(index).value);
+        setTitle(u"Display link test - %1"_s.arg(presets.at(index).name));
+        m_frameTimes.clear();
+    }
+
 protected:
+    bool event(QEvent *event) override
+    {
+        if (event->type() == QEvent::UpdateRequest)
+            ++m_updateRequests;
+        else if (event->type() == QEvent::Expose)
+            isExposed() ? ++m_exposes : ++m_unexposes;
+        return QRasterWindow::event(event);
+    }
+
     void paintEvent(QPaintEvent *) override
     {
         const qint64 now = m_clock.nsecsElapsed();
+        ++m_frameCount;
         m_frameTimes.push_back(now);
         while (!m_frameTimes.empty() && now - m_frameTimes.front() > 1'000'000'000)
             m_frameTimes.pop_front();
@@ -79,9 +138,7 @@ protected:
         const int x = int(phase * (width() + barWidth)) - barWidth;
         p.fillRect(QRect(x, height() / 2, barWidth, height() / 2), QColor(80, 160, 255));
 
-        const double rate = m_frameTimes.size() > 1
-                ? (m_frameTimes.size() - 1) * 1e9 / (m_frameTimes.back() - m_frameTimes.front())
-                : 0;
+        const double rate = updateRate();
 
         p.setPen(Qt::white);
         QFont font = p.font();
@@ -94,8 +151,18 @@ protected:
                                      .arg(presets.at(m_preset).name);
         p.drawText(bounds.adjusted(16, 16, -16, -16), Qt::AlignLeft | Qt::AlignTop, text);
 
-        if (m_animating)
+        if (m_busyMs > 0) {
+            QElapsedTimer busy;
+            busy.start();
+            while (busy.elapsed() < m_busyMs) { }
+        }
+
+        if (m_animating) {
+            // QPaintDeviceWindow::update() doesn't request an update when not exposed
+            if (!isExposed())
+                ++m_lostUpdates;
             update();
+        }
     }
 
     void keyPressEvent(QKeyEvent *event) override
@@ -108,24 +175,21 @@ protected:
             window->setPosition(position() + QPoint(40, 40));
             window->show();
         } else if (key == Qt::Key_Space) {
-            m_animating = !m_animating;
-            m_frameTimes.clear();
+            setAnimating(!m_animating);
         }
         update();
     }
 
 private:
-    void setPreset(int index)
-    {
-        m_preset = index;
-        setProperty("_q_preferredFrameRateRange", presets.at(index).value);
-        setTitle(u"Display link test - %1"_s.arg(presets.at(index).name));
-        m_frameTimes.clear();
-    }
-
     QElapsedTimer m_clock;
     std::deque<qint64> m_frameTimes;
     int m_preset = 0;
+    int m_busyMs = 0;
+    int m_frameCount = 0;
+    int m_updateRequests = 0;
+    int m_exposes = 0;
+    int m_unexposes = 0;
+    int m_lostUpdates = 0;
     bool m_animating = true;
 };
 
@@ -133,8 +197,52 @@ int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
 
-    AnimationWindow window;
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    const QCommandLineOption logOption(u"log"_s, u"Print stats every 250 ms."_s);
+    const QCommandLineOption presetOption(u"preset"_s, u"Initial preset."_s, u"n"_s, u"0"_s);
+    const QCommandLineOption positionOption(u"position"_s, u"Window position."_s, u"x,y"_s);
+    const QCommandLineOption pauseOption(u"pause-after"_s, u"Stop animating after s seconds."_s,
+                                         u"s"_s);
+    const QCommandLineOption quitOption(u"quit-after"_s, u"Quit after s seconds."_s, u"s"_s);
+    const QCommandLineOption busyOption(u"busy-ms"_s, u"CPU time per frame."_s, u"ms"_s, u"0"_s);
+    const QCommandLineOption onTopOption(u"on-top"_s, u"Keep the window above others."_s);
+    parser.addOptions({ logOption, presetOption, positionOption, pauseOption, quitOption,
+                        busyOption, onTopOption });
+    parser.process(app);
+
+    AnimationWindow window(parser.value(presetOption).toInt() % presets.size());
+    window.setBusyTime(parser.value(busyOption).toInt());
+    if (parser.isSet(onTopOption))
+        window.setFlag(Qt::WindowStaysOnTopHint);
+    if (parser.isSet(positionOption)) {
+        const QStringList xy = parser.value(positionOption).split(u',');
+        if (xy.size() == 2)
+            window.setPosition(xy.at(0).toInt(), xy.at(1).toInt());
+    }
     window.show();
+
+    if (parser.isSet(logOption)) {
+        auto *logTimer = new QTimer(&app);
+        QElapsedTimer sinceStart;
+        sinceStart.start();
+        QObject::connect(logTimer, &QTimer::timeout, &app, [&window, sinceStart] {
+            std::printf("t=%.2f rate=%.1f frames=%d refresh=%.1f size=%dx%d exposed=%d %s\n",
+                        sinceStart.elapsed() / 1000.0, window.updateRate(), window.takeFrameCount(),
+                        window.screen()->refreshRate(), window.width(), window.height(),
+                        window.isExposed(), qPrintable(window.takeEventCounts()));
+            std::fflush(stdout);
+        });
+        logTimer->start(250);
+    }
+    if (parser.isSet(pauseOption)) {
+        QTimer::singleShot(int(parser.value(pauseOption).toDouble() * 1000), &window,
+                           [&window] { window.setAnimating(false); });
+    }
+    if (parser.isSet(quitOption)) {
+        QTimer::singleShot(int(parser.value(quitOption).toDouble() * 1000), &app,
+                           &QCoreApplication::quit);
+    }
 
     return app.exec();
 }
