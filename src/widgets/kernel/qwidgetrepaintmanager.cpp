@@ -25,6 +25,7 @@
 #include <QtGui/private/qwindow_p.h>
 
 #include <qpa/qplatformbackingstore.h>
+#include <qpa/qplatformwindow.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -328,6 +329,33 @@ void QWidgetRepaintManager::addDirtyRenderToTextureWidget(QWidget *widget)
     }
 }
 
+static bool hasPlatformWindow(QWidget *widget);
+
+/*!
+    Returns whether updates of the top-level are scheduled with
+    QWindow::requestUpdate() instead of posting an update request event, so
+    that they are paced to the display and to the window's preferred frame rate.
+
+    That's the case when the platform window paces its update requests because
+    the window has a preferred frame rate, see QWindow::preferredFrameRate.
+    Setting QT_WIDGETS_PACED_UPDATES to 1 forces it, and 0 disables it.
+*/
+bool QWidgetRepaintManager::usesPacedUpdateRequests() const
+{
+    static const int mode = qEnvironmentVariableIsSet("QT_WIDGETS_PACED_UPDATES")
+            ? qEnvironmentVariableIntValue("QT_WIDGETS_PACED_UPDATES") : -1;
+    if (mode == 0 || !hasPlatformWindow(tlw))
+        return false;
+    QWidgetPrivate *d = tlw->d_func();
+    if (d->shouldPaintOnScreen() || tlw->testAttribute(Qt::WA_DontShowOnScreen))
+        return false;
+#if QT_CONFIG(graphicsview)
+    if (d->extra && d->extra->proxyWidget)
+        return false;
+#endif
+    return mode == 1 || tlw->windowHandle()->handle()->pacesUpdateRequests();
+}
+
 void QWidgetRepaintManager::sendUpdateRequest(QWidget *widget, UpdateTime updateTime)
 {
     if (!widget)
@@ -355,6 +383,21 @@ void QWidgetRepaintManager::sendUpdateRequest(QWidget *widget, UpdateTime update
 
     switch (updateTime) {
     case UpdateLater:
+        if (widget == tlw && usesPacedUpdateRequests()) {
+            QWindow *window = tlw->windowHandle();
+            QWindowPrivate *wd = QWindowPrivate::get(window);
+            // A pending update request made by someone else repaints the whole
+            // window when delivered, which covers our dirty state as well.
+            if (!wd->updateRequestPending)
+                windowUpdateRequested = true;
+            window->requestUpdate();
+            if (wd->updateRequestPending) {
+                updateRequestSent = true;
+                break;
+            }
+            // Not accepted by the window, post the event instead
+            windowUpdateRequested = false;
+        }
         // Prevent redundant update request events, unless it's a
         // paint on screen widget, as these don't go through the
         // normal backingstore sync machinery.

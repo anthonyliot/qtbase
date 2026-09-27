@@ -116,6 +116,9 @@ struct QTLWExtra {
 
     std::vector<std::unique_ptr<QPlatformTextureList>> widgetTextures;
 
+    // The window's preferred frame rate, kept when the window is recreated
+    qreal preferredFrameRate;
+
     // *************************** Cross-platform bit fields ****************************
     uint opacity : 8;
     uint posIncludesFrame : 1;
