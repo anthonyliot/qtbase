@@ -200,14 +200,40 @@ as the machine was in use), so n=1 per row:
 GPU time isn't included in these CPU figures, and it's this app's main cost. Rerun
 `bench/crt-ab.sh` with the machine idle for more samples and the 30 fps case.
 
+ProMotion (2026-09-26, MacBook built-in display, variable 24-120 Hz). cool-retro-term, same
+script (`bench/crt-ab.sh`), 14 of 15 runs valid:
+
+| Scenario | Plugin | runs | fps | CPU % | wakeups/s |
+|---|---|---|---|---|---|
+| running, default | old | 3 | 116.3 | 14.6 | 261 |
+| running, default | new | 3 | 118.1 | 14.9 | 236 |
+| running, env 60 | old (ignored) | 2 | 118.1 | 17.5 | 258 |
+| running, env 60 | new | 3 | 59.2 | 11.1 | 163 |
+| running, env 30 | new | 3 | 29.7 | 6.5 | 90 |
+
+**Panel refresh rate** (measured from the display's vsyncs with the xctrace Display
+instrument, `bench/panel-rate-ab.sh` + `bench/vsync_rates.py`), cool-retro-term running:
+
+| Scenario | Panel refresh |
+|---|---|
+| old (CVDisplayLink), default | 120 Hz |
+| old, env 60 (ignored) | 120 Hz |
+| new (CADisplayLink), default | 120 Hz |
+| **new, env 60** | **60 Hz** (99% of intervals) |
+| nothing of ours running | 24-30 Hz |
+
+So with CADisplayLink the system actually lowers the panel's refresh rate to what the app asks
+for, while with CVDisplayLink the panel stays at its maximum regardless. One trial per row: the
+other runs were skipped because another app's window was in front. The 30 fps panel measurement
+is still missing (rerun `bench/panel-rate-ab.sh 2 new:30 new:60 old:` with the machine idle).
+
 Not verified yet (needs hands-on or more builds):
 
 * Live window resize with the kept event-tap workaround, moving windows between displays,
   display sleep/wake, and display reconfiguration (display ID change path).
 * Qt Quick (qtdeclarative isn't built here): threaded and basic render loops with a preference.
-* Instruments confirmation that the panel actually drops its refresh rate when all animating
-  windows ask for less.
-* A real ProMotion iPhone/iPad (the simulator is 60 Hz).
+* Panel refresh at 30 fps on ProMotion (60 fps confirmed, see above).
+* A real ProMotion iPhone/iPad (the simulator is 60 Hz). A ProMotion Mac is covered above.
 
 Next steps:
 
