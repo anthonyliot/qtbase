@@ -1881,7 +1881,9 @@ void QCocoaWindow::requestUpdate()
         << "using" << (updatesWithDisplayLink() ? "display-link" : "timer");
 
     if (updatesWithDisplayLink()) {
-        if (!static_cast<QCocoaScreen *>(screen())->requestUpdate()) {
+        if (static_cast<QCocoaScreen *>(screen())->requestUpdate()) {
+            stopFallbackUpdateTimer();
+        } else {
             qCDebug(lcQpaDrawing) << "Falling back to timer-based update request";
             QPlatformWindow::requestUpdate();
         }
@@ -1889,6 +1891,17 @@ void QCocoaWindow::requestUpdate()
         // Fall back to the un-throttled timer-based callback
         QPlatformWindow::requestUpdate();
     }
+}
+
+/*
+    Stops the timer QPlatformWindow::requestUpdate() uses when the display link
+    isn't available. The timer keeps delivering for as long as the window has a
+    pending update request, so once the display link works again it would
+    otherwise keep delivering too, ignoring the window's frame rate preference.
+*/
+void QCocoaWindow::stopFallbackUpdateTimer()
+{
+    QPlatformWindow::d_ptr->updateTimer.stop();
 }
 
 bool QCocoaWindow::updatesWithDisplayLink() const

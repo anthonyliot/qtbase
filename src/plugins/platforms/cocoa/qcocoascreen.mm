@@ -429,6 +429,9 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
             frameRatePreference.frameDelivered(targetTimestamp);
             qt_window_private(window)->updateRequestInterval =
                     frameRatePreference.effectiveFrameInterval(frameInterval);
+            // The display link may have been restarted without going through
+            // QCocoaWindow::requestUpdate(), e.g. after a screen change.
+            platformWindow->stopFallbackUpdateTimer();
             platformWindow->deliverUpdateRequest();
 
             // platform window can be destroyed in deliverUpdateRequest()

@@ -115,6 +115,7 @@ public:
     bool updatesWithDisplayLink() const;
     void deliverUpdateRequest() override;
     QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }
+    void stopFallbackUpdateTimer();
 
     void requestActivateWindow() override;
 
