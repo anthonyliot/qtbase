@@ -437,6 +437,10 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
             // platform window can be destroyed in deliverUpdateRequest()
             if (!platformWindow)
                 continue;
+
+            // Only valid during delivery, so that frames driven by other means,
+            // such as expose events, don't use the paced interval.
+            qt_window_private(window)->updateRequestInterval = 0;
         }
 
         // The update request delivery could result in another request

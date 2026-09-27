@@ -407,6 +407,10 @@ void QIOSScreen::deliverUpdateRequests(CADisplayLink *displayLink) const
             // platform window can be destroyed in deliverUpdateRequest()
             if (!platformWindow)
                 continue;
+
+            // Only valid during delivery, so that frames driven by other means,
+            // such as expose events, don't use the paced interval.
+            qt_window_private(window)->updateRequestInterval = 0;
         }
 
         // Another update request was triggered, keep the display link running
