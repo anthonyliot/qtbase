@@ -21,18 +21,23 @@
 // For automated runs:
 //   --log              print updates/s, refresh rate and size every 250 ms
 //   --preset <n>       start with preset n
+//   --rate <fps>       set QWindow::preferredFrameRate (the public API) instead
 //   --position <x,y>   initial window position
 //   --pause-after <s>  stop animating after s seconds (to measure idle cost)
 //   --quit-after <s>   quit after s seconds
 //   --busy-ms <ms>     spend ms milliseconds of CPU time per frame, like a heavy renderer
 //   --on-top           keep the window above others, so it isn't occluded (occluded
 //                      windows are not exposed, and stop painting)
+//   --trace            at exit, print the last update request, expose and paint events,
+//                      with the window's exposure and pending update request state
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QRasterWindow>
 #include <QtGui/QScreen>
+#include <qpa/qplatformwindow.h>
+#include <QtCore/QStringList>
 #include <QtCore/QCommandLineParser>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
@@ -109,9 +114,32 @@ public:
         m_frameTimes.clear();
     }
 
+    // Recent events, for --trace
+    bool tracing = false;
+    QStringList trace;
+
+    void note(const char *what)
+    {
+        if (!tracing)
+            return;
+        if (!m_traceClock.isValid())
+            m_traceClock.start();
+        const bool pending = handle() && handle()->hasPendingUpdateRequest();
+        trace.append(QString::asprintf("%8.3f %-22s exposed=%d pending=%d",
+                                       m_traceClock.nsecsElapsed() / 1e9, what, isExposed(), pending));
+        if (trace.size() > 60)
+            trace.removeFirst();
+    }
+
 protected:
     bool event(QEvent *event) override
     {
+        if (event->type() == QEvent::UpdateRequest)
+            note("UpdateRequest");
+        else if (event->type() == QEvent::Expose)
+            note("Expose");
+        else if (event->type() == QEvent::Paint)
+            note("Paint(event)");
         if (event->type() == QEvent::UpdateRequest)
             ++m_updateRequests;
         else if (event->type() == QEvent::Expose)
@@ -161,7 +189,9 @@ protected:
             // QPaintDeviceWindow::update() doesn't request an update when not exposed
             if (!isExposed())
                 ++m_lostUpdates;
+            note("paint:before update()");
             update();
+            note("paint:after update()");
         }
     }
 
@@ -186,6 +216,7 @@ private:
     int m_preset = 0;
     int m_busyMs = 0;
     int m_frameCount = 0;
+    QElapsedTimer m_traceClock;
     int m_updateRequests = 0;
     int m_exposes = 0;
     int m_unexposes = 0;
@@ -207,14 +238,19 @@ int main(int argc, char **argv)
     const QCommandLineOption quitOption(u"quit-after"_s, u"Quit after s seconds."_s, u"s"_s);
     const QCommandLineOption busyOption(u"busy-ms"_s, u"CPU time per frame."_s, u"ms"_s, u"0"_s);
     const QCommandLineOption onTopOption(u"on-top"_s, u"Keep the window above others."_s);
+    const QCommandLineOption traceOption(u"trace"_s, u"Print recent update events at exit."_s);
+    const QCommandLineOption rateOption(u"rate"_s, u"QWindow::preferredFrameRate."_s, u"fps"_s);
     parser.addOptions({ logOption, presetOption, positionOption, pauseOption, quitOption,
-                        busyOption, onTopOption });
+                        busyOption, onTopOption, traceOption, rateOption });
     parser.process(app);
 
     AnimationWindow window(parser.value(presetOption).toInt() % presets.size());
     window.setBusyTime(parser.value(busyOption).toInt());
     if (parser.isSet(onTopOption))
         window.setFlag(Qt::WindowStaysOnTopHint);
+    window.tracing = parser.isSet(traceOption);
+    if (parser.isSet(rateOption))
+        window.setPreferredFrameRate(parser.value(rateOption).toDouble());
     if (parser.isSet(positionOption)) {
         const QStringList xy = parser.value(positionOption).split(u',');
         if (xy.size() == 2)
@@ -244,5 +280,8 @@ int main(int argc, char **argv)
                            &QCoreApplication::quit);
     }
 
-    return app.exec();
+    const int rc = app.exec();
+    for (const QString &line : std::as_const(window.trace))
+        std::fprintf(stderr, "TRACE %s\n", qPrintable(line));
+    return rc;
 }

@@ -13,4 +13,5 @@ qt_internal_add_manual_test(displaylink
         main.cpp
     LIBRARIES
         Qt::Gui
+        Qt::GuiPrivate
 )
