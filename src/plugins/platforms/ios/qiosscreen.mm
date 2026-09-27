@@ -330,7 +330,7 @@ bool QIOSScreen::updateDisplayLinkFrameRate() const
             continue;
 
         const auto range = platformWindow->frameRatePreference().update(window);
-        frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
+        frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
     }
 
     if (frameRateRange)
@@ -417,7 +417,7 @@ void QIOSScreen::deliverUpdateRequests(CADisplayLink *displayLink) const
         if (platformWindow->hasPendingUpdateRequest()) {
             pauseUpdates = false;
             const auto range = platformWindow->frameRatePreference().update(window);
-            frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
+            frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
         }
     }
 

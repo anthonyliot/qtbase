@@ -12,8 +12,11 @@
 #include <QtCore/qvarlengtharray.h>
 #include <QtGui/qwindow.h>
 
+#include <QtGui/qscreen.h>
+
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 QT_BEGIN_NAMESPACE
 
@@ -144,13 +147,63 @@ std::optional<QAppleFrameRateRange> QAppleFrameRateRange::fromVariant(const QVar
     return std::nullopt;
 }
 
-QAppleFrameRateRange
-QAppleFrameRateRange::unitedWith(const QAppleFrameRateRange &other) const noexcept
+// The number of display refreshes per frame if rate is an exact rate the
+// display can show (displayRate divided by a whole number), or 0.
+static int exactFramesPerDelivery(const QAppleFrameRateRange &range, qreal displayRate)
+{
+    if (!(displayRate > 0) || !(range.preferred > 0) || range.minimum != range.preferred
+        || range.maximum != range.preferred) {
+        return 0;
+    }
+    const double frames = displayRate / range.preferred;
+    const int n = qRound(frames);
+    return n >= 1 && qAbs(frames - n) < 1e-3 * frames ? n : 0;
+}
+
+QAppleFrameRateRange QAppleFrameRateRange::forPreferredFrameRate(qreal framesPerSecond,
+                                                                 qreal displayRate) noexcept
+{
+    if (!(framesPerSecond > 0) || !std::isfinite(framesPerSecond))
+        return QAppleFrameRateRange();
+    if (!(displayRate > 0)) {
+        // Unknown display, let the system pick the closest rate it supports
+        const float rate = float(framesPerSecond);
+        return QAppleFrameRateRange(rate, rate, rate);
+    }
+
+    // Clamped, as tiny rates would overflow
+    const double ratio = std::min(displayRate / framesPerSecond, 1e6);
+    int frames = std::max(1, int(std::floor(ratio + 0.5 - 1e-3)));
+    // Never below the preferred rate, so that content at that rate doesn't
+    // skip frames, e.g. 25 fps on a 120 Hz display gives 30, not 24.
+    while (frames > 1 && displayRate / frames < framesPerSecond * 0.99)
+        --frames;
+    // Every refresh is what the system does by default. Don't pin the maximum
+    // rate explicitly, the system knows better what that is at any moment.
+    if (frames == 1)
+        return QAppleFrameRateRange();
+    const float rate = float(displayRate / frames);
+    return QAppleFrameRateRange(rate, rate, rate);
+}
+
+QAppleFrameRateRange QAppleFrameRateRange::unitedWith(const QAppleFrameRateRange &other,
+                                                      qreal displayRate) const noexcept
 {
     // A default range lets the system run at whatever rate it sees fit, which
     // in practice is the maximum refresh rate, so that wins over any limit.
     if (isDefault() || other.isDefault())
         return QAppleFrameRateRange();
+
+    // Two exact rates: run at their greatest common rate, so both stay exact
+    const int a = exactFramesPerDelivery(*this, displayRate);
+    const int b = exactFramesPerDelivery(other, displayRate);
+    if (a && b) {
+        const int common = std::gcd(a, b);
+        if (common == 1)
+            return QAppleFrameRateRange();
+        const float rate = float(displayRate / common);
+        return QAppleFrameRateRange(rate, rate, rate);
+    }
 
     QAppleFrameRateRange united(std::max(minimum, other.minimum), std::max(maximum, other.maximum));
 
@@ -188,7 +241,9 @@ double QAppleFrameRateRange::frameInterval() const noexcept
 // so that the decision is stable from frame to frame.
 static int framesPerDelivery(double interval, double linkFrameInterval)
 {
-    return std::max(1, int(std::floor(interval / linkFrameInterval + 0.5 - 1e-3)));
+    // Clamped, as tiny rates would overflow
+    const double frames = std::min(interval / linkFrameInterval, 1e6);
+    return std::max(1, int(std::floor(frames + 0.5 - 1e-3)));
 }
 
 bool QAppleFrameRateRange::shouldDeliverFrame(double lastTargetTimestamp, double targetTimestamp,
@@ -256,6 +311,18 @@ QAppleFrameRateRange QAppleFrameRatePreference::environmentDefault()
 
 QAppleFrameRateRange QAppleFrameRatePreference::update(const QWindow *window)
 {
+    // The public API wins over the (unsupported) property and environment variable
+    if (const qreal preferredFrameRate = window->preferredFrameRate(); preferredFrameRate > 0) {
+        const qreal displayRate = window->screen() ? window->screen()->refreshRate() : 0;
+        const auto range = QAppleFrameRateRange::forPreferredFrameRate(preferredFrameRate, displayRate);
+        if (range != m_range)
+            qCDebug(lcFrameRate) << window << "prefers" << preferredFrameRate << "fps, using" << range;
+        m_range = range;
+        m_value = QVariant();
+        m_valueWasInvalid = false;
+        return m_range;
+    }
+
     const QVariant value = window->property(propertyName);
     if (!value.isValid()) {
         m_value = QVariant();

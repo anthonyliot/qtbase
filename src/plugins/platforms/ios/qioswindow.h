@@ -54,6 +54,8 @@ public:
     QSurfaceFormat format() const override;
 
     void requestUpdate() override;
+    void setPreferredFrameRate(qreal framesPerSecond) override;
+    bool pacesUpdateRequests() const override;
     QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }
 
     void setMask(const QRegion &region) override;

@@ -56,8 +56,18 @@ struct Q_GUI_EXPORT QAppleFrameRateRange
     // "60", "30,120" or "30,120,60". Empty, "0" or "default" means default.
     static std::optional<QAppleFrameRateRange> fromString(QStringView string);
 
-    // The range a shared display link needs to satisfy both requests
-    QAppleFrameRateRange unitedWith(const QAppleFrameRateRange &other) const noexcept;
+    // The range for QWindow::preferredFrameRate on a display refreshing at
+    // displayRate: the exact rate displayRate / n closest to framesPerSecond,
+    // but not below it (within 1%), so that no content frame is skipped. The
+    // default range if that's every refresh.
+    static QAppleFrameRateRange forPreferredFrameRate(qreal framesPerSecond, qreal displayRate) noexcept;
+
+    // The range a shared display link needs to satisfy both requests. If both
+    // are exact rates the display can show, the display link runs at their
+    // greatest common rate, so that both stay exact, e.g. 24 and 60 on a
+    // 120 Hz display keep the display link at 120.
+    QAppleFrameRateRange unitedWith(const QAppleFrameRateRange &other,
+                                    qreal displayRate = 0) const noexcept;
 
     // The interval in seconds between frames requested by this range,
     // or 0 if the range doesn't limit the frame rate.

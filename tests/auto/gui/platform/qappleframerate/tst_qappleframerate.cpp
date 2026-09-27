@@ -46,6 +46,11 @@ private slots:
     void pacing_data();
     void pacing();
     void effectiveFrameInterval();
+    void forPreferredFrameRate_data();
+    void forPreferredFrameRate();
+    void unitedExactRates_data();
+    void unitedExactRates();
+    void preferenceFromPublicApi();
     void preferenceFromWindowProperty();
 };
 
@@ -289,6 +294,119 @@ void tst_QAppleFrameRate::effectiveFrameInterval()
     QCOMPARE(Range(100, 100, 100).effectiveFrameInterval(1.0 / 240), 2.0 / 240);
     // Display link already slowed down to the window's rate
     QCOMPARE(Range(30, 30, 30).effectiveFrameInterval(1.0 / 30), 1.0 / 30);
+}
+
+void tst_QAppleFrameRate::forPreferredFrameRate_data()
+{
+    QTest::addColumn<double>("displayRate");
+    QTest::addColumn<double>("preferred");
+    QTest::addColumn<double>("expectedRate"); // 0 = every refresh (default range)
+
+    // Exact rates, and the next faster exact rate otherwise (never below)
+    QTest::newRow("120@120") << 120.0 << 120.0 << 0.0;
+    QTest::newRow("80@120") << 120.0 << 80.0 << 0.0;
+    QTest::newRow("60@120") << 120.0 << 60.0 << 60.0;
+    QTest::newRow("59.94@120") << 120.0 << 59.94 << 60.0;
+    QTest::newRow("50@120") << 120.0 << 50.0 << 60.0;
+    QTest::newRow("48@120") << 120.0 << 48.0 << 60.0;
+    QTest::newRow("40@120") << 120.0 << 40.0 << 40.0;
+    QTest::newRow("30@120") << 120.0 << 30.0 << 30.0;
+    QTest::newRow("29.97@120") << 120.0 << 29.97 << 30.0;
+    QTest::newRow("25@120") << 120.0 << 25.0 << 30.0;
+    QTest::newRow("24@120") << 120.0 << 24.0 << 24.0;
+    QTest::newRow("23.976@120") << 120.0 << 24000.0 / 1001 << 24.0;
+    QTest::newRow("1000@120") << 120.0 << 1000.0 << 0.0;
+    QTest::newRow("60@60") << 60.0 << 60.0 << 0.0;
+    QTest::newRow("50@60") << 60.0 << 50.0 << 0.0;
+    QTest::newRow("30@60") << 60.0 << 30.0 << 30.0;
+    QTest::newRow("25@60") << 60.0 << 25.0 << 30.0;
+    QTest::newRow("24@60") << 60.0 << 24.0 << 30.0;
+    QTest::newRow("30@59.94") << 59.94 << 30.0 << 29.97;
+    QTest::newRow("48@240") << 240.0 << 48.0 << 48.0;
+    QTest::newRow("80@240") << 240.0 << 80.0 << 80.0;
+    QTest::newRow("25@240") << 240.0 << 25.0 << 240.0 / 9;
+    QTest::newRow("0") << 120.0 << 0.0 << 0.0;
+    QTest::newRow("negative") << 120.0 << -1.0 << 0.0;
+}
+
+void tst_QAppleFrameRate::forPreferredFrameRate()
+{
+    QFETCH(double, displayRate);
+    QFETCH(double, preferred);
+    QFETCH(double, expectedRate);
+
+    const Range range = Range::forPreferredFrameRate(preferred, displayRate);
+    QVERIFY(range.isValid());
+    if (expectedRate == 0) {
+        QVERIFY2(range.isDefault(), QTest::toString(range));
+    } else {
+        QCOMPARE(range.preferred, float(expectedRate));
+        QCOMPARE(range.minimum, range.preferred);
+        QCOMPARE(range.maximum, range.preferred);
+        // Never below the preferred rate
+        QVERIFY(range.preferred >= preferred * 0.99);
+    }
+}
+
+void tst_QAppleFrameRate::unitedExactRates_data()
+{
+    QTest::addColumn<double>("displayRate");
+    QTest::addColumn<Range>("a");
+    QTest::addColumn<Range>("b");
+    QTest::addColumn<Range>("expected");
+
+    // Both stay exact: the display link runs at their greatest common rate
+    QTest::newRow("24+60@120") << 120.0 << Range(24, 24, 24) << Range(60, 60, 60) << Range();
+    QTest::newRow("30+60@120") << 120.0 << Range(30, 30, 30) << Range(60, 60, 60) << Range(60, 60, 60);
+    QTest::newRow("24+30@120") << 120.0 << Range(24, 24, 24) << Range(30, 30, 30) << Range();
+    QTest::newRow("30+40@120") << 120.0 << Range(30, 30, 30) << Range(40, 40, 40) << Range();
+    QTest::newRow("30+30@120") << 120.0 << Range(30, 30, 30) << Range(30, 30, 30) << Range(30, 30, 30);
+    QTest::newRow("24+60@240") << 240.0 << Range(24, 24, 24) << Range(60, 60, 60) << Range(120, 120, 120);
+    QTest::newRow("48+80@240") << 240.0 << Range(48, 48, 48) << Range(80, 80, 80) << Range();
+    QTest::newRow("24+48@240") << 240.0 << Range(24, 24, 24) << Range(48, 48, 48) << Range(48, 48, 48);
+    // Not exact on this display: previous behavior
+    QTest::newRow("25+60@120") << 120.0 << Range(25, 25, 25) << Range(60, 60, 60) << Range(60, 60, 60);
+    // Unknown display rate: previous behavior
+    QTest::newRow("24+60@0") << 0.0 << Range(24, 24, 24) << Range(60, 60, 60) << Range(60, 60, 60);
+}
+
+void tst_QAppleFrameRate::unitedExactRates()
+{
+    QFETCH(double, displayRate);
+    QFETCH(Range, a);
+    QFETCH(Range, b);
+    QFETCH(Range, expected);
+    QCOMPARE(a.unitedWith(b, displayRate), expected);
+    QCOMPARE(b.unitedWith(a, displayRate), expected);
+
+    // And each window is then paced exactly at its rate on the resulting link
+    const Range united = a.unitedWith(b, displayRate);
+    const double linkRate = united.isDefault() ? displayRate : united.preferred;
+    if (displayRate > 0 && linkRate > 0) {
+        for (const Range &r : { a, b }) {
+            const double frames = linkRate / r.preferred;
+            if (qAbs(frames - qRound(frames)) < 1e-3 * frames)
+                QCOMPARE(r.effectiveFrameInterval(1 / linkRate), 1 / double(r.preferred));
+        }
+    }
+}
+
+void tst_QAppleFrameRate::preferenceFromPublicApi()
+{
+    QWindow window;
+    QAppleFrameRatePreference preference;
+    const qreal displayRate = window.screen()->refreshRate();
+
+    window.setPreferredFrameRate(30);
+    QCOMPARE(preference.update(&window), Range::forPreferredFrameRate(30, displayRate));
+
+    // The public API wins over the property
+    window.setProperty(QAppleFrameRatePreference::propertyName, 60);
+    QCOMPARE(preference.update(&window), Range::forPreferredFrameRate(30, displayRate));
+
+    // And the property applies again once the API is reset
+    window.resetPreferredFrameRate();
+    QCOMPARE(preference.update(&window), Range(60, 60, 60));
 }
 
 void tst_QAppleFrameRate::preferenceFromWindowProperty()

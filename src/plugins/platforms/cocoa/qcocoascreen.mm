@@ -290,6 +290,14 @@ bool QCocoaScreen::requestUpdate()
         return false;
     }
 
+    // The display link can't deliver while a nested event loop runs inside
+    // its delivery, so let the window fall back to a timer in the meantime.
+    if (m_nestedEventLoopInDelivery) {
+        qCDebug(lcQpaScreenUpdates) << "Nested event loop in delivery for" << this
+                                    << "- not using the display link";
+        return false;
+    }
+
     if (!m_displayLink) {
         NSScreen *nsScreen = nativeScreen();
         if (!nsScreen) {
@@ -400,6 +408,23 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
     }
     QScopedValueRollback recursionGuard(m_deliveringUpdateRequests, true);
 
+    // If delivering an update request spins a nested event loop (e.g. a modal
+    // dialog opened from a paint event), the display link can't deliver to any
+    // window on this screen until it returns. A timer only fires if an event
+    // loop runs, so use one to detect that, and let the windows fall back to
+    // timer based update requests in the meantime.
+    if (!m_nestedDeliveryWatchdog) {
+        m_nestedDeliveryWatchdog = std::make_unique<QTimer>();
+        m_nestedDeliveryWatchdog->setSingleShot(true);
+        QObject::connect(m_nestedDeliveryWatchdog.get(), &QTimer::timeout,
+                         [this] { handleNestedEventLoopInDelivery(); });
+    }
+    m_nestedDeliveryWatchdog->start(std::max(50, int(frameInterval * 3000)));
+    auto stopWatchdog = qScopeGuard([this] {
+        m_nestedDeliveryWatchdog->stop();
+        m_nestedEventLoopInDelivery = false;
+    });
+
     QMacAutoReleasePool pool;
 
     qCDebug(lcQpaScreenUpdates) << "Display link callback for" << this << "targeting"
@@ -453,7 +478,7 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
         if (platformWindow->hasPendingUpdateRequest()) {
             anyPendingUpdateRequests = true;
             const auto range = platformWindow->frameRatePreference().update(window);
-            frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
+            frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
         }
     }
 
@@ -474,6 +499,23 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
         qCDebug(lcQpaScreenUpdates)
                 << "No pending update requests. Pausing display link for" << this;
         m_displayLink.paused = YES;
+    }
+}
+
+void QCocoaScreen::handleNestedEventLoopInDelivery()
+{
+    qCDebug(lcQpaScreenUpdates) << "Nested event loop during update request delivery for" << this
+                                << "- falling back to timer based update requests";
+    m_nestedEventLoopInDelivery = true;
+    const auto windows = QGuiApplication::allWindows();
+    for (auto *window : windows) {
+        if (window->screen() != screen())
+            continue;
+        auto *platformWindow = static_cast<QCocoaWindow *>(window->handle());
+        if (platformWindow && platformWindow->hasPendingUpdateRequest()
+            && platformWindow->updatesWithDisplayLink()) {
+            platformWindow->QPlatformWindow::requestUpdate();
+        }
     }
 }
 
@@ -515,7 +557,7 @@ bool QCocoaScreen::updateDisplayLinkFrameRate()
         }
 
         const auto range = platformWindow->frameRatePreference().update(window);
-        frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
+        frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
     }
 
     if (frameRateRange && m_displayLink)

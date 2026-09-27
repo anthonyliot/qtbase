@@ -112,6 +112,8 @@ public:
     bool isForeignWindow() const override;
 
     void requestUpdate() override;
+    void setPreferredFrameRate(qreal framesPerSecond) override;
+    bool pacesUpdateRequests() const override;
     bool updatesWithDisplayLink() const;
     void deliverUpdateRequest() override;
     QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }

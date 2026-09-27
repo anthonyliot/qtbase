@@ -9,6 +9,9 @@
 
 #include <qpa/qplatformintegration.h>
 #include <QtCore/private/qcore_mac_p.h>
+#include <QtCore/qtimer.h>
+
+#include <memory>
 
 #include <CoreGraphics/CoreGraphics.h>
 
@@ -100,6 +103,9 @@ private:
 
     CADisplayLink *m_displayLink = nullptr;
     bool m_deliveringUpdateRequests = false;
+    bool m_nestedEventLoopInDelivery = false;
+    std::unique_ptr<QTimer> m_nestedDeliveryWatchdog;
+    void handleNestedEventLoopInDelivery();
 
     bool hasPendingUpdateRequests() const;
     void maybePauseDisplayLink();
