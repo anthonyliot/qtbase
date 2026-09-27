@@ -95,6 +95,9 @@ Q_GUI_EXPORT QDebug operator<<(QDebug debug, const QAppleFrameRateRange &range);
 // The preference comes from the "_q_preferredFrameRateRange" QWindow property, or
 // if that isn't set from the QT_APPLE_PREFERRED_FRAME_RATE_RANGE environment
 // variable. Invalid values are warned about once and treated as default.
+//
+// Both the property and the environment variable are internal and unsupported,
+// meant for experimentation until there is public API for this.
 class Q_GUI_EXPORT QAppleFrameRatePreference
 {
 public:

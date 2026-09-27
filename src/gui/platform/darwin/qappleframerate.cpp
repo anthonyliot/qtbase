@@ -17,7 +17,7 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_STATIC_LOGGING_CATEGORY(lcFrameRate, "qt.qpa.framerate")
+Q_STATIC_LOGGING_CATEGORY(lcFrameRate, "qt.qpa.framerate", QtWarningMsg)
 
 bool QAppleFrameRateRange::isValid() const noexcept
 {
@@ -152,10 +152,22 @@ QAppleFrameRateRange::unitedWith(const QAppleFrameRateRange &other) const noexce
     if (isDefault() || other.isDefault())
         return QAppleFrameRateRange();
 
-    QAppleFrameRateRange united(std::max(minimum, other.minimum), std::max(maximum, other.maximum),
-                                std::max(preferred, other.preferred));
-    if (united.preferred != 0)
-        united.preferred = std::clamp(united.preferred, united.minimum, united.maximum);
+    QAppleFrameRateRange united(std::max(minimum, other.minimum), std::max(maximum, other.maximum));
+
+    // No preferred rate means "as fast as the maximum allows", not "as slow as
+    // possible", so it must not let the other side's lower preference win.
+    // An unbounded maximum without a preference leaves the choice to the system.
+    const auto effectivePreferred = [](const QAppleFrameRateRange &r) -> float {
+        if (r.preferred > 0)
+            return r.preferred;
+        return std::isfinite(r.maximum) ? r.maximum : 0;
+    };
+    if (preferred != 0 || other.preferred != 0) {
+        const float a = effectivePreferred(*this);
+        const float b = effectivePreferred(other);
+        if (a != 0 && b != 0)
+            united.preferred = std::clamp(std::max(a, b), united.minimum, united.maximum);
+    }
     return united;
 }
 
@@ -169,12 +181,14 @@ double QAppleFrameRateRange::frameInterval() const noexcept
     return 1.0 / rate;
 }
 
-// Deliver on the display link frame closest to the requested interval.
-// This matches what CoreAnimation does when asked for a rate that is not
-// a divisor of the refresh rate (it rounds to the nearest supported rate).
-static double pacingTolerance(double linkFrameInterval)
+// The number of display link frames between deliveries, when the requested
+// interval isn't a multiple of the display link interval. Rounds to the nearest
+// frame count, with ties (e.g. 24 fps on a 60 Hz display) going to the faster
+// rate, like CoreAnimation does. The bias is large compared to timestamp jitter,
+// so that the decision is stable from frame to frame.
+static int framesPerDelivery(double interval, double linkFrameInterval)
 {
-    return std::max(linkFrameInterval / 2, 0.0005);
+    return std::max(1, int(std::floor(interval / linkFrameInterval + 0.5 - 1e-3)));
 }
 
 bool QAppleFrameRateRange::shouldDeliverFrame(double lastTargetTimestamp, double targetTimestamp,
@@ -188,7 +202,14 @@ bool QAppleFrameRateRange::shouldDeliverFrame(double lastTargetTimestamp, double
     if (targetTimestamp < lastTargetTimestamp)
         return true;
 
-    return targetTimestamp - lastTargetTimestamp >= interval - pacingTolerance(linkFrameInterval);
+    const double elapsed = targetTimestamp - lastTargetTimestamp;
+    if (linkFrameInterval <= 0)
+        return elapsed >= interval - 0.0005;
+
+    // Deliver on the display link frame that is closest to the frame count,
+    // with half a frame of tolerance for timestamp jitter.
+    const int frames = framesPerDelivery(interval, linkFrameInterval);
+    return elapsed >= (frames - 0.5) * linkFrameInterval;
 }
 
 double QAppleFrameRateRange::effectiveFrameInterval(double linkFrameInterval) const noexcept
@@ -199,10 +220,7 @@ double QAppleFrameRateRange::effectiveFrameInterval(double linkFrameInterval) co
     if (interval <= 0)
         return linkFrameInterval;
 
-    // The smallest number of display link frames that shouldDeliverFrame() waits for
-    const double tolerance = pacingTolerance(linkFrameInterval);
-    const double frames = std::ceil((interval - tolerance) / linkFrameInterval - 1e-6);
-    return std::max(1.0, frames) * linkFrameInterval;
+    return framesPerDelivery(interval, linkFrameInterval) * linkFrameInterval;
 }
 
 #ifndef QT_NO_DEBUG_STREAM

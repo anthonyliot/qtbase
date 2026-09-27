@@ -58,7 +58,7 @@ void tst_QAppleFrameRate::validation_data()
     QTest::addColumn<bool>("valid");
 
     // Matches what -[CADisplayLink setPreferredFrameRateRange:] accepts
-    // (see wip-cadisplaylink/probes/valid.m)
+    // (measured on macOS 27 and the iOS 27 simulator)
     QTest::newRow("default") << Range(0, 0, 0) << true;
     QTest::newRow("0,0,30") << Range(0, 0, 30) << false;
     QTest::newRow("0,60,30") << Range(0, 60, 30) << false;
@@ -169,9 +169,14 @@ void tst_QAppleFrameRate::unitedWith_data()
     QTest::newRow("30+30") << Range(30, 30, 30) << Range(30, 30, 30) << Range(30, 30, 30);
     QTest::newRow("30+60") << Range(30, 30, 30) << Range(60, 60, 60) << Range(60, 60, 60);
     QTest::newRow("24+30,120,60") << Range(24, 24, 24) << Range(30, 120, 60) << Range(30, 120, 60);
+    // No preferred rate means up to the maximum, so the other side's lower
+    // preference doesn't throttle it
     QTest::newRow("clamps preferred")
-            << Range(100, 120, 0) << Range(10, 60, 30) << Range(100, 120, 100);
+            << Range(100, 120, 0) << Range(10, 60, 30) << Range(100, 120, 120);
+    QTest::newRow("no preferred + 24") << Range(30, 120) << Range(24, 24, 24) << Range(30, 120, 120);
+    QTest::newRow("no preferred + 60") << Range(30, 120) << Range(60, 60, 60) << Range(60, 120, 120);
     QTest::newRow("no preferred") << Range(10, 60) << Range(20, 30) << Range(20, 60, 0);
+    QTest::newRow("unbounded + 30") << Range(10, inf) << Range(30, 30, 30) << Range(30, inf, 0);
 }
 
 void tst_QAppleFrameRate::unitedWith()
@@ -200,47 +205,66 @@ void tst_QAppleFrameRate::pacing_data()
 {
     QTest::addColumn<Range>("range");
     QTest::addColumn<double>("linkRate");
-    QTest::addColumn<int>("expectedFramesPerSecond");
+    QTest::addColumn<int>("framesPerDelivery");
 
-    QTest::newRow("default@240") << Range() << 240.0 << 240;
-    QTest::newRow("30@240") << Range(30, 30, 30) << 240.0 << 30;
-    QTest::newRow("60@240") << Range(60, 60, 60) << 240.0 << 60;
-    QTest::newRow("120@240") << Range(120, 120, 120) << 240.0 << 120;
-    QTest::newRow("24@240") << Range(24, 24, 24) << 240.0 << 24;
-    QTest::newRow("48@240") << Range(48, 48, 48) << 240.0 << 48;
+    QTest::newRow("default@240") << Range() << 240.0 << 1;
+    QTest::newRow("30@240") << Range(30, 30, 30) << 240.0 << 8;
+    QTest::newRow("60@240") << Range(60, 60, 60) << 240.0 << 4;
+    QTest::newRow("120@240") << Range(120, 120, 120) << 240.0 << 2;
+    QTest::newRow("24@240") << Range(24, 24, 24) << 240.0 << 10;
+    QTest::newRow("48@240") << Range(48, 48, 48) << 240.0 << 5;
     // Same rounding as CoreAnimation (measured: 100 on a 240 Hz panel gives 120)
-    QTest::newRow("100@240") << Range(100, 100, 100) << 240.0 << 120;
-    QTest::newRow("30@60") << Range(30, 30, 30) << 60.0 << 30;
-    QTest::newRow("60@60") << Range(60, 60, 60) << 60.0 << 60;
-    QTest::newRow("120@60") << Range(120, 120, 120) << 60.0 << 60;
-    QTest::newRow("24@120") << Range(24, 24, 24) << 120.0 << 24;
-    QTest::newRow("30,120,60@120") << Range(30, 120, 60) << 120.0 << 60;
+    QTest::newRow("100@240") << Range(100, 100, 100) << 240.0 << 2;
+    QTest::newRow("30@60") << Range(30, 30, 30) << 60.0 << 2;
+    QTest::newRow("60@60") << Range(60, 60, 60) << 60.0 << 1;
+    QTest::newRow("120@60") << Range(120, 120, 120) << 60.0 << 1;
+    QTest::newRow("24@120") << Range(24, 24, 24) << 120.0 << 5;
+    QTest::newRow("30,120,60@120") << Range(30, 120, 60) << 120.0 << 2;
+    // Ties go to the faster rate (measured: 24 on a 60 Hz display gives 30)
+    QTest::newRow("24@60") << Range(24, 24, 24) << 60.0 << 2;
+    QTest::newRow("48@120") << Range(48, 48, 48) << 120.0 << 2;
+    QTest::newRow("96@240") << Range(96, 96, 96) << 240.0 << 2;
+    QTest::newRow("40@60") << Range(40, 40, 40) << 60.0 << 1;
+    QTest::newRow("80@120") << Range(80, 80, 80) << 120.0 << 1;
+    QTest::newRow("160@240") << Range(160, 160, 160) << 240.0 << 1;
+    QTest::newRow("30@75") << Range(30, 30, 30) << 75.0 << 2;
+    // Refresh rates that aren't multiples of the requested rate
+    QTest::newRow("30@59.94") << Range(30, 30, 30) << 59.94 << 2;
+    QTest::newRow("30@50") << Range(30, 30, 30) << 50.0 << 2;
+    QTest::newRow("30@144") << Range(30, 30, 30) << 144.0 << 5;
+    QTest::newRow("60@144") << Range(60, 60, 60) << 144.0 << 2;
 }
 
 void tst_QAppleFrameRate::pacing()
 {
     QFETCH(Range, range);
     QFETCH(double, linkRate);
-    QFETCH(int, expectedFramesPerSecond);
+    QFETCH(int, framesPerDelivery);
 
     const double linkInterval = 1.0 / linkRate;
-    // Start at an arbitrary host time, and simulate a little jitter
-    double last = 0;
-    int delivered = 0;
-    const int ticks = int(linkRate);
-    for (int i = 1; i <= ticks; ++i) {
-        const double jitter = (i % 3 - 1) * linkInterval * 0.05;
-        const double target = 1000.0 + i * linkInterval + jitter;
-        if (range.shouldDeliverFrame(last, target, linkInterval)) {
-            ++delivered;
-            last = target;
+
+    // With a little jitter, and without jitter at a large host time (where
+    // timestamps land exactly on the thresholds, apart from rounding)
+    for (const auto &[startTime, jitterFactor] : { std::pair{ 1000.0, 0.05 }, std::pair{ 1e6, 0.0 } }) {
+        double last = 0;
+        QList<int> gaps;
+        const int ticks = int(linkRate * 2);
+        for (int i = 1; i <= ticks; ++i) {
+            const double jitter = (i % 3 - 1) * linkInterval * jitterFactor;
+            const double target = startTime + i * linkInterval + jitter;
+            if (range.shouldDeliverFrame(last, target, linkInterval)) {
+                if (last > 0)
+                    gaps.append(qRound((target - last) / linkInterval));
+                last = target;
+            }
         }
+        QVERIFY(!gaps.isEmpty());
+        for (int gap : std::as_const(gaps))
+            QCOMPARE(gap, framesPerDelivery);
     }
-    QCOMPARE(delivered, expectedFramesPerSecond);
 
     // The effective frame interval matches what the pacing lets through
-    const double effectiveInterval = range.effectiveFrameInterval(linkInterval);
-    QCOMPARE(qRound(1.0 / effectiveInterval), expectedFramesPerSecond);
+    QCOMPARE(range.effectiveFrameInterval(linkInterval), framesPerDelivery * linkInterval);
 
     // Time going backwards always delivers
     QVERIFY(range.shouldDeliverFrame(2000.0, 1000.0, linkInterval));
