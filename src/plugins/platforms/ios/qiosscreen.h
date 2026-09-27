@@ -56,7 +56,7 @@ public:
 private:
     static void initializeScreens();
     void deliverUpdateRequests(CADisplayLink *displayLink) const;
-    void updateDisplayLinkFrameRate() const;
+    bool updateDisplayLinkFrameRate() const;
     void setDisplayLinkFrameRate(const QAppleFrameRateRange &range) const;
 
     bool shouldPauseDisplayLinkWhenInactive() const;

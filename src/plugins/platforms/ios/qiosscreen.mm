@@ -316,7 +316,9 @@ void QIOSScreen::setUpdatesPaused(bool paused)
     m_displayLink.paused = paused;
 }
 
-void QIOSScreen::updateDisplayLinkFrameRate() const
+// Updates the display link's frame rate range from the windows that have pending
+// update requests, and returns whether there are any.
+bool QIOSScreen::updateDisplayLinkFrameRate() const
 {
     std::optional<QAppleFrameRateRange> frameRateRange;
     for (auto *window : QGuiApplication::allWindows()) {
@@ -333,6 +335,7 @@ void QIOSScreen::updateDisplayLinkFrameRate() const
 
     if (frameRateRange)
         setDisplayLinkFrameRate(*frameRateRange);
+    return frameRateRange.has_value();
 }
 
 void QIOSScreen::setDisplayLinkFrameRate(const QAppleFrameRateRange &range) const
@@ -416,6 +419,13 @@ void QIOSScreen::deliverUpdateRequests(CADisplayLink *displayLink) const
 
     if (frameRateRange)
         setDisplayLinkFrameRate(*frameRateRange);
+
+    // A window we looked at before delivering to another one may have gotten an
+    // update request in the meantime, e.g. when one window drives the frames of
+    // another. Its request won't reach us again, as it's already pending, so look
+    // at all the windows again before pausing.
+    if (pauseUpdates)
+        pauseUpdates = !updateDisplayLinkFrameRate();
 
     // Pause the display link if there are no pending update requests
     m_displayLink.paused = pauseUpdates;

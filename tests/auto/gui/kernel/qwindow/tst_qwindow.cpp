@@ -30,6 +30,7 @@
 #endif
 
 using namespace Qt::StringLiterals;
+using namespace std::chrono_literals;
 
 Q_LOGGING_CATEGORY(lcTests, "qt.gui.tests")
 
@@ -116,6 +117,7 @@ private slots:
     void requestUpdateRate();
     void requestUpdateMultipleWindows();
     void requestUpdateCreatedButHidden();
+    void requestUpdateForOtherWindowDuringDelivery();
     void requestUpdateAfterHideAndShow();
     void requestUpdateSwapIntervalZero();
     void preferredFrameRate_data();
@@ -3421,6 +3423,48 @@ void tst_QWindow::requestUpdateCreatedButHidden()
     QVERIFY(platformWindow);
     QVERIFY(platformWindow->hasPendingUpdateRequest());
     QTRY_VERIFY(!platformWindow->hasPendingUpdateRequest());
+}
+
+void tst_QWindow::requestUpdateForOtherWindowDuringDelivery()
+{
+    // An update request made for another window while an update request is
+    // being delivered must not get lost, even if that window was already
+    // looked at during the same delivery pass (e.g. one window driving the
+    // frames of another).
+    class Window : public QWindow
+    {
+    public:
+        int updateRequests = 0;
+        QWindow *requestForOnce = nullptr;
+
+    protected:
+        bool event(QEvent *event) override
+        {
+            if (event->type() == QEvent::UpdateRequest) {
+                ++updateRequests;
+                if (auto *other = std::exchange(requestForOnce, nullptr))
+                    other->requestUpdate();
+            }
+            return QWindow::event(event);
+        }
+    };
+
+    // Create the driving window first, so that the other one is newer, which
+    // puts it first in QGuiApplication::allWindows().
+    Window drivingWindow;
+    Window otherWindow;
+    drivingWindow.setGeometry(QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    otherWindow.setGeometry(QRect(m_availableTopLeft + QPoint(120, 120), m_testWindowSize));
+    drivingWindow.show();
+    otherWindow.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&drivingWindow));
+    QVERIFY(QTest::qWaitForWindowExposed(&otherWindow));
+
+    const int otherUpdatesBefore = otherWindow.updateRequests;
+    drivingWindow.requestForOnce = &otherWindow;
+    drivingWindow.requestUpdate();
+    QTRY_COMPARE_WITH_TIMEOUT(drivingWindow.requestForOnce, nullptr, 2s);
+    QTRY_VERIFY_WITH_TIMEOUT(otherWindow.updateRequests > otherUpdatesBefore, 2s);
 }
 
 void tst_QWindow::requestUpdateAfterHideAndShow()

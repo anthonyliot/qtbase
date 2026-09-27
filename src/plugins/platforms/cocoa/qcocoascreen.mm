@@ -401,7 +401,7 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
     qCDebug(lcQpaScreenUpdates) << "Display link callback for" << this << "targeting"
                                 << targetTimestamp << "with frame interval" << frameInterval;
 
-    bool hasPendingUpdateRequests = false;
+    bool anyPendingUpdateRequests = false;
     std::optional<QAppleFrameRateRange> frameRateRange;
 
     auto windows = QGuiApplication::allWindows();
@@ -440,7 +440,7 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
         // from the window, or the platform window could decide to not
         // deliver the request at this time.
         if (platformWindow->hasPendingUpdateRequest()) {
-            hasPendingUpdateRequests = true;
+            anyPendingUpdateRequests = true;
             const auto range = platformWindow->frameRatePreference().update(window);
             frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
         }
@@ -449,7 +449,14 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
     if (frameRateRange && m_displayLink)
         setDisplayLinkFrameRate(*frameRateRange);
 
-    if (!hasPendingUpdateRequests && m_displayLink) {
+    // A window we looked at before delivering to another one may have gotten an
+    // update request in the meantime, e.g. when one window drives the frames of
+    // another. Its request won't reach us again, as it's already pending, so look
+    // at all the windows again before pausing.
+    if (!anyPendingUpdateRequests)
+        anyPendingUpdateRequests = updateDisplayLinkFrameRate();
+
+    if (!anyPendingUpdateRequests && m_displayLink) {
         // Unlike a CVDisplayLink there's no thread to stop and start, so
         // pausing and resuming is cheap, and avoids waking up the main
         // thread for every display refresh when nothing is animating.
@@ -480,11 +487,10 @@ bool QCocoaScreen::hasPendingUpdateRequests() const
     return false;
 }
 
-void QCocoaScreen::updateDisplayLinkFrameRate()
+// Updates the display link's frame rate range from the windows that have pending
+// update requests, and returns whether there are any.
+bool QCocoaScreen::updateDisplayLinkFrameRate()
 {
-    if (!m_displayLink)
-        return;
-
     std::optional<QAppleFrameRateRange> frameRateRange;
     const auto windows = QGuiApplication::allWindows();
     for (auto *window : windows) {
@@ -501,8 +507,9 @@ void QCocoaScreen::updateDisplayLinkFrameRate()
         frameRateRange = frameRateRange ? frameRateRange->unitedWith(range) : range;
     }
 
-    if (frameRateRange)
+    if (frameRateRange && m_displayLink)
         setDisplayLinkFrameRate(*frameRateRange);
+    return frameRateRange.has_value();
 }
 
 void QCocoaScreen::setDisplayLinkFrameRate(const QAppleFrameRateRange &range)

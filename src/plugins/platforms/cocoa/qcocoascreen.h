@@ -103,7 +103,7 @@ private:
 
     bool hasPendingUpdateRequests() const;
     void maybePauseDisplayLink();
-    void updateDisplayLinkFrameRate();
+    bool updateDisplayLinkFrameRate();
     void setDisplayLinkFrameRate(const QAppleFrameRateRange &range);
     void invalidateDisplayLink();
 
