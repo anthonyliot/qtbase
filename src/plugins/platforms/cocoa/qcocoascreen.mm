@@ -332,9 +332,13 @@ bool QCocoaScreen::requestUpdate()
         // queue is completely drained of drag events, will the window frame be updated.
 
         // By keeping an event tap listening for drag events, registered as a version 1 runloop source,
-        // we prevent the GCD source from being prioritized, giving the resize logic enough time
-        // to finish coalescing the events. This is incidental, but conveniently gives us the behavior
-        // we are looking for, interleaving display-link updates and resize events.
+        // we prevent the display-link source from being prioritized, giving the resize logic enough
+        // time to finish coalescing the events. This is incidental, but conveniently gives us the
+        // behavior we are looking for, interleaving display-link updates and resize events.
+
+        // FIXME: This was written for the GCD source that delivered CVDisplayLink callbacks to the
+        // main thread. It's kept for CADisplayLink, which is a run loop source as well, but hasn't
+        // been re-validated with it. Synthetic live-resize tests showed no difference without it.
         static CFMachPortRef eventTap = []() {
             CFMachPortRef eventTap = CGEventTapCreateForPid(getpid(), kCGTailAppendEventTap,
                 kCGEventTapOptionListenOnly, NSEventMaskLeftMouseDragged,
