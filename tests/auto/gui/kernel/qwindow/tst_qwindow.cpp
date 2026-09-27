@@ -3287,7 +3287,7 @@ protected:
     }
 };
 
-static constexpr int kMeasureMs = 1000;
+static constexpr int kMeasureMs = 500;
 
 // Unlike QTest::qWait, which sleeps between processing events, this runs a
 // real event loop, so that update requests can be delivered at full rate.
@@ -3342,17 +3342,45 @@ static bool updatesArePacedByDisplay()
             QSKIP("Update requests are not paced by the display on this platform"); \
     } while (false)
 
-// The display can only refresh at an integer divisor of its refresh rate, so
-// when the requested rate isn't one, the system rounds up to the closest one
-// that's faster (e.g. 24 fps on a 60 Hz display gives 30 fps, and 100 fps on a
-// 240 Hz display gives 120 fps). Qt's pacing of windows that share a display
-// link does the same.
-static double achievableRate(double refreshRate, double requestedRate)
+// Frames can only be delivered every n display refreshes. When the requested
+// rate isn't a divisor of the refresh rate, Qt's pacing (used when windows with
+// different preferences share a display link) rounds n to the nearest integer,
+// with ties going to the faster rate, e.g. 24 fps on a 60 Hz display gives 30 fps,
+// and 100 fps on a 240 Hz display gives 120 fps.
+static double qtPacedRate(double refreshRate, double requestedRate)
 {
     if (requestedRate <= 0 || requestedRate >= refreshRate)
         return refreshRate;
-    const int divisor = std::max(1, int(std::floor(refreshRate / requestedRate + 0.001)));
-    return refreshRate / divisor;
+    const int n = std::max(1, int(std::floor(refreshRate / requestedRate + 0.5 - 1e-3)));
+    return refreshRate / n;
+}
+
+// When a single window determines the display link's rate, the system picks it,
+// and may snap to the next faster rate it supports instead.
+struct RateBounds
+{
+    double slowest;
+    double fastest;
+};
+static RateBounds systemPacedRates(double refreshRate, double requestedRate)
+{
+    const double rate = qtPacedRate(refreshRate, requestedRate);
+    const double frames = refreshRate / requestedRate;
+    const bool exactDivisor = requestedRate > 0 && qAbs(frames - qRound(frames)) < 0.01 * frames;
+    if (exactDivisor || rate >= refreshRate)
+        return { rate, rate };
+    const int n = qRound(refreshRate / rate);
+    return { rate, refreshRate / std::max(1, n - 1) };
+}
+
+// The rate a window without a preference gets. That's normally the screen's
+// refresh rate, but the system may run the display link slower (e.g. in low
+// power mode), so prefer what the display link reports.
+static double unthrottledRate(const AnimatingWindow &window)
+{
+    if (window.lastUpdateRequestInterval > 0)
+        return 1.0 / window.lastUpdateRequestInterval;
+    return window.screen()->refreshRate();
 }
 
 static void showAnimatingWindow(AnimatingWindow &window, const QRect &geometry)
@@ -3365,13 +3393,16 @@ static void showAnimatingWindow(AnimatingWindow &window, const QRect &geometry)
 
 // A rate is "close" when within 20% below, allowing for missed frames on
 // loaded machines, and within 10% above, as we should never overshoot.
-#define QCOMPARE_RATE(actual, expected)                                                    \
-    do {                                                                                   \
-        const double a = actual;                                                           \
-        const double e = expected;                                                         \
-        if (a < e * 0.8 || a > e * 1.1)                                                    \
-            QFAIL(qPrintable(u"Rate %1/s is not close to expected %2/s"_s.arg(a).arg(e))); \
+#define QCOMPARE_RATE_BETWEEN(actual, slowest, fastest)                                     \
+    do {                                                                                    \
+        const double a = actual;                                                            \
+        const double lo = slowest;                                                          \
+        const double hi = fastest;                                                          \
+        if (a < lo * 0.8 || a > hi * 1.1)                                                   \
+            QFAIL(qPrintable(u"Rate %1/s is not within %2/s and %3/s"_s.arg(a).arg(lo).arg(hi))); \
     } while (false)
+#define QCOMPARE_RATE(actual, expected) QCOMPARE_RATE_BETWEEN(actual, expected, expected)
+#define QCOMPARE_RATE_IN(actual, bounds) QCOMPARE_RATE_BETWEEN(actual, (bounds).slowest, (bounds).fastest)
 
 void tst_QWindow::requestUpdateRate()
 {
@@ -3384,10 +3415,11 @@ void tst_QWindow::requestUpdateRate()
 
     const double refreshRate = window.screen()->refreshRate();
     const double rate = measureUpdateRates({ &window }).first();
-    qCDebug(lcTests) << "Update rate" << rate << "on screen with refresh rate" << refreshRate;
+    qCDebug(lcTests) << "Update rate" << rate << "on screen with refresh rate" << refreshRate
+                     << "display link rate" << unthrottledRate(window);
 
     QVERIFY(window.allOnMainThread);
-    QCOMPARE_RATE(rate, refreshRate);
+    QCOMPARE_RATE(rate, unthrottledRate(window));
 }
 
 void tst_QWindow::requestUpdateMultipleWindows()
@@ -3403,10 +3435,9 @@ void tst_QWindow::requestUpdateMultipleWindows()
     if (window1.screen() != window2.screen())
         QSKIP("Windows ended up on different screens");
 
-    const double refreshRate = window1.screen()->refreshRate();
     const auto rates = measureUpdateRates({ &window1, &window2 });
-    QCOMPARE_RATE(rates.at(0), refreshRate);
-    QCOMPARE_RATE(rates.at(1), refreshRate);
+    QCOMPARE_RATE(rates.at(0), unthrottledRate(window1));
+    QCOMPARE_RATE(rates.at(1), unthrottledRate(window2));
 }
 
 void tst_QWindow::requestUpdateCreatedButHidden()
@@ -3497,9 +3528,15 @@ void tst_QWindow::requestUpdateSwapIntervalZero()
     if (QTest::currentTestFailed())
         return;
 
+    window.lastUpdateRequestInterval = -1;
     const double rate = measureUpdateRates({ &window }, 500).first();
     QVERIFY(window.allOnMainThread);
     QVERIFY2(rate > 10, qPrintable(QString::number(rate)));
+
+    // Timer based update requests are not paced, so they don't report an interval
+    if (QGuiApplication::platformName() == "ios"_L1)
+        QSKIP("iOS always paces update requests with the display link");
+    QCOMPARE(window.lastUpdateRequestInterval, 0.0);
 }
 
 void tst_QWindow::preferredFrameRate_data()
@@ -3535,12 +3572,14 @@ void tst_QWindow::preferredFrameRate()
     const double refreshRate = window.screen()->refreshRate();
     if (expectedRate > refreshRate)
         QSKIP("Screen refresh rate too low for this test");
-    expectedRate = achievableRate(refreshRate, expectedRate);
 
     const double rate = measureUpdateRates({ &window }).first();
     qCDebug(lcTests) << "Update rate" << rate << "for" << preference << "at refresh rate"
                      << refreshRate;
-    QCOMPARE_RATE(rate, expectedRate);
+    if (expectedRate == 0)
+        QCOMPARE_RATE(rate, unthrottledRate(window));
+    else
+        QCOMPARE_RATE_IN(rate, systemPacedRates(refreshRate, expectedRate));
 }
 
 void tst_QWindow::preferredFrameRateMixedWindows()
@@ -3564,12 +3603,13 @@ void tst_QWindow::preferredFrameRateMixedWindows()
     // The slow window gets its rate, even if the display link needs to
     // run faster for the other window, and doesn't slow the other one down.
     auto rates = measureUpdateRates({ &slowWindow, &fastWindow });
-    QCOMPARE_RATE(rates.at(0), achievableRate(refreshRate, 30));
-    QCOMPARE_RATE(rates.at(1), refreshRate);
+    const double linkRate = unthrottledRate(fastWindow);
+    QCOMPARE_RATE(rates.at(0), qtPacedRate(linkRate, 30));
+    QCOMPARE_RATE(rates.at(1), linkRate);
 
     // Once the fast window stops, the slow window keeps its rate
     rates = measureUpdateRates({ &slowWindow });
-    QCOMPARE_RATE(rates.at(0), achievableRate(refreshRate, 30));
+    QCOMPARE_RATE_IN(rates.at(0), systemPacedRates(refreshRate, 30));
 }
 
 void tst_QWindow::preferredFrameRateRuntimeChange()
@@ -3585,19 +3625,19 @@ void tst_QWindow::preferredFrameRateRuntimeChange()
     if (refreshRate < 50)
         QSKIP("Screen refresh rate too low for this test");
 
-    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), refreshRate);
+    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), unthrottledRate(window));
 
     window.setProperty("_q_preferredFrameRateRange", 30);
-    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), achievableRate(refreshRate, 30));
+    QCOMPARE_RATE_IN(measureUpdateRates({ &window }).first(), systemPacedRates(refreshRate, 30));
 
     // Change while animating
     window.startAnimating();
     spinEventLoop(100);
     window.setProperty("_q_preferredFrameRateRange", 24);
-    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), achievableRate(refreshRate, 24));
+    QCOMPARE_RATE_IN(measureUpdateRates({ &window }).first(), systemPacedRates(refreshRate, 24));
 
     window.setProperty("_q_preferredFrameRateRange", QVariant());
-    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), refreshRate);
+    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), unthrottledRate(window));
 }
 
 void tst_QWindow::preferredFrameRateUpdateRequestInterval_data()
@@ -3628,24 +3668,24 @@ void tst_QWindow::preferredFrameRateUpdateRequestInterval()
         QSKIP("Screen refresh rate too low for this test");
 
     // The window knows the frame interval it's being paced at, e.g. so
-    // that animations can advance by the right amount per frame.
+    // that animations can advance by the right amount per frame. That's a
+    // whole number of display refreshes...
     const double rate = measureUpdateRates({ &window }).first();
-    const double expectedInterval = 1.0 / achievableRate(refreshRate, requestedRate);
-    QVERIFY2(qAbs(window.lastUpdateRequestInterval - expectedInterval) < expectedInterval * 0.05,
-             qPrintable(u"Interval %1 s, expected %2 s"_s.arg(window.lastUpdateRequestInterval)
-                                .arg(expectedInterval)));
+    const double interval = window.lastUpdateRequestInterval;
+    const double refreshInterval = 1.0 / refreshRate;
+    const double refreshes = interval / refreshInterval;
+    QVERIFY2(interval > 0 && qAbs(refreshes - qRound(refreshes)) < 0.05,
+             qPrintable(u"Interval %1 s is not a multiple of %2 s"_s.arg(interval).arg(refreshInterval)));
+    // ...within one refresh of the requested interval
+    if (requestedRate > 0) {
+        QVERIFY2(qAbs(interval - 1.0 / requestedRate) <= refreshInterval * 1.05,
+                 qPrintable(u"Interval %1 s, requested %2 s"_s.arg(interval).arg(1.0 / requestedRate)));
+    }
     // And it's consistent with the measured rate
-    QCOMPARE_RATE(rate, 1.0 / window.lastUpdateRequestInterval);
+    QCOMPARE_RATE(rate, 1.0 / interval);
 
-    // Timer based updates don't have a known interval
-    window.destroy();
-    QSurfaceFormat format;
-    format.setSwapInterval(0);
-    window.setFormat(format);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    measureUpdateRates({ &window }, 200);
-    QCOMPARE(window.lastUpdateRequestInterval, 0.0);
+    // Outside of update request delivery it's not set
+    QCOMPARE(QWindowPrivate::get(&window)->updateRequestInterval, 0.0);
 }
 
 void tst_QWindow::preferredFrameRateInvalid_data()
@@ -3676,8 +3716,17 @@ void tst_QWindow::preferredFrameRateInvalid()
     if (QTest::currentTestFailed())
         return;
 
-    // Invalid preferences fall back to the default behavior
-    QCOMPARE_RATE(measureUpdateRates({ &window }).first(), window.screen()->refreshRate());
+    // Invalid preferences fall back to the default behavior, i.e. the same
+    // interval as without a preference
+    measureUpdateRates({ &window }, 200);
+    QVERIFY(window.updateRequests > 0);
+    const double invalidInterval = window.lastUpdateRequestInterval;
+    window.setProperty("_q_preferredFrameRateRange", QVariant());
+    measureUpdateRates({ &window }, 200);
+    QVERIFY(window.updateRequests > 0);
+    QVERIFY2(qAbs(invalidInterval - window.lastUpdateRequestInterval) < invalidInterval * 0.05,
+             qPrintable(u"Interval %1 s with invalid preference, %2 s without"_s
+                                .arg(invalidInterval).arg(window.lastUpdateRequestInterval)));
 }
 
 void tst_QWindow::activateDeactivateEvent()
