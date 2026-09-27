@@ -94,6 +94,8 @@ class Q_GUI_EXPORT QWindow : public QObject, public QSurface
     Q_PROPERTY(Qt::ScreenOrientation contentOrientation READ contentOrientation
                WRITE reportContentOrientationChange NOTIFY contentOrientationChanged)
     Q_PROPERTY(qreal opacity READ opacity WRITE setOpacity NOTIFY opacityChanged REVISION(2, 1))
+    Q_PROPERTY(qreal preferredFrameRate READ preferredFrameRate WRITE setPreferredFrameRate
+               RESET resetPreferredFrameRate NOTIFY preferredFrameRateChanged REVISION(6, 13))
 #ifdef Q_QDOC
     Q_PROPERTY(QWindow* transientParent READ transientParent WRITE setTransientParent NOTIFY transientParentChanged)
 #else
@@ -156,6 +158,10 @@ public:
 
     void setOpacity(qreal level);
     qreal opacity() const;
+
+    void setPreferredFrameRate(qreal framesPerSecond);
+    qreal preferredFrameRate() const;
+    void resetPreferredFrameRate();
 
     void setMask(const QRegion &region);
     QRegion mask() const;
@@ -324,6 +330,7 @@ Q_SIGNALS:
     void focusObjectChanged(QObject *object);
 
     Q_REVISION(2, 1) void opacityChanged(qreal opacity);
+    Q_REVISION(6, 13) void preferredFrameRateChanged(qreal preferredFrameRate);
 
     Q_REVISION(2, 13) void transientParentChanged(QWindow *transientParent);
 

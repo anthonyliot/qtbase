@@ -143,6 +143,7 @@ public:
     bool resizeAutomatic = true;
     Qt::ScreenOrientation contentOrientation = Qt::PrimaryOrientation;
     qreal opacity= 1;
+    qreal preferredFrameRate = 0;
     QRegion mask;
 
     QSize minimumSize = {0, 0};
