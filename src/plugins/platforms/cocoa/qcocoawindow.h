@@ -116,6 +116,7 @@ public:
     bool pacesUpdateRequests() const override;
     bool updatesWithDisplayLink() const;
     void deliverUpdateRequest() override;
+    bool tryDeliverUpdateRequest();
     QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }
     void stopFallbackUpdateTimer();
 

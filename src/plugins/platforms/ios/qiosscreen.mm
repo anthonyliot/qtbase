@@ -316,23 +316,40 @@ void QIOSScreen::setUpdatesPaused(bool paused)
     m_displayLink.paused = paused;
 }
 
+namespace {
+// The windows on a QIOSScreen, which all get their update requests from its display link
+class IOSDisplayLinkScreen : public QAppleDisplayLinkDelivery::Screen
+{
+public:
+    explicit IOSDisplayLinkScreen(const QIOSScreen *screen) : m_screen(screen) { }
+
+    bool updatesWithDisplayLink(const QWindow *window) const override
+    {
+        return QPlatformScreen::platformScreenForWindow(window) == m_screen && window->handle();
+    }
+
+    QAppleFrameRatePreference &frameRatePreference(const QWindow *window) override
+    {
+        return static_cast<QIOSWindow *>(window->handle())->frameRatePreference();
+    }
+
+    bool deliverUpdateRequest(QWindow *window) override
+    {
+        window->handle()->deliverUpdateRequest();
+        return true;
+    }
+
+private:
+    const QIOSScreen *m_screen;
+};
+} // namespace
+
 // Updates the display link's frame rate range from the windows that have pending
 // update requests, and returns whether there are any.
 bool QIOSScreen::updateDisplayLinkFrameRate() const
 {
-    std::optional<QAppleFrameRateRange> frameRateRange;
-    for (auto *window : QGuiApplication::allWindows()) {
-        if (platformScreenForWindow(window) != this)
-            continue;
-
-        auto *platformWindow = static_cast<QIOSWindow *>(window->handle());
-        if (!platformWindow || !platformWindow->hasPendingUpdateRequest())
-            continue;
-
-        const auto range = platformWindow->frameRatePreference().update(window);
-        frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
-    }
-
+    IOSDisplayLinkScreen displayLinkScreen(this);
+    const auto frameRateRange = QAppleDisplayLinkDelivery::pendingRange(displayLinkScreen, refreshRate());
     if (frameRateRange)
         setDisplayLinkFrameRate(*frameRateRange);
     return frameRateRange.has_value();
@@ -361,8 +378,6 @@ void QIOSScreen::setDisplayLinkFrameRate(const QAppleFrameRateRange &range) cons
 
 void QIOSScreen::deliverUpdateRequests(CADisplayLink *displayLink) const
 {
-    bool pauseUpdates = true;
-
     if (shouldPauseDisplayLinkWhenInactive()
         && QGuiApplication::applicationState() != Qt::ApplicationActive) {
         // The applicationWillResignActive documentation describes that the app
@@ -377,62 +392,16 @@ void QIOSScreen::deliverUpdateRequests(CADisplayLink *displayLink) const
 
     QScopedValueRollback recursionGuard(m_deliveringUpdateRequests, true);
 
-    const double targetTimestamp = displayLink.targetTimestamp;
-    const double frameInterval = displayLink.targetTimestamp - displayLink.timestamp;
-    std::optional<QAppleFrameRateRange> frameRateRange;
-
-    QList<QWindow*> windows = QGuiApplication::allWindows();
-    for (int i = 0; i < windows.size(); ++i) {
-        QWindow *window = windows.at(i);
-        if (platformScreenForWindow(window) != this)
-            continue;
-
-        QPointer<QIOSWindow> platformWindow = static_cast<QIOSWindow *>(window->handle());
-        if (!platformWindow)
-            continue;
-
-        if (!platformWindow->hasPendingUpdateRequest())
-            continue;
-
-        // The display link runs fast enough for the most demanding window,
-        // so windows that asked for a lower frame rate skip some frames.
-        auto &frameRatePreference = platformWindow->frameRatePreference();
-        frameRatePreference.update(window);
-        if (frameRatePreference.shouldDeliverFrame(targetTimestamp, frameInterval)) {
-            frameRatePreference.frameDelivered(targetTimestamp);
-            qt_window_private(window)->updateRequestInterval =
-                    frameRatePreference.effectiveFrameInterval(frameInterval);
-            platformWindow->deliverUpdateRequest();
-
-            // platform window can be destroyed in deliverUpdateRequest()
-            if (!platformWindow)
-                continue;
-
-            // Only valid during delivery, so that frames driven by other means,
-            // such as expose events, don't use the paced interval.
-            qt_window_private(window)->updateRequestInterval = 0;
-        }
-
-        // Another update request was triggered, keep the display link running
-        if (platformWindow->hasPendingUpdateRequest()) {
-            pauseUpdates = false;
-            const auto range = platformWindow->frameRatePreference().update(window);
-            frameRateRange = frameRateRange ? frameRateRange->unitedWith(range, refreshRate()) : range;
-        }
-    }
-
+    IOSDisplayLinkScreen displayLinkScreen(this);
+    const auto frameRateRange = QAppleDisplayLinkDelivery::deliver(
+            displayLinkScreen,
+            { displayLink.targetTimestamp, displayLink.targetTimestamp - displayLink.timestamp,
+              refreshRate() });
     if (frameRateRange)
         setDisplayLinkFrameRate(*frameRateRange);
 
-    // A window we looked at before delivering to another one may have gotten an
-    // update request in the meantime, e.g. when one window drives the frames of
-    // another. Its request won't reach us again, as it's already pending, so look
-    // at all the windows again before pausing.
-    if (pauseUpdates)
-        pauseUpdates = !updateDisplayLinkFrameRate();
-
     // Pause the display link if there are no pending update requests
-    m_displayLink.paused = pauseUpdates;
+    m_displayLink.paused = !frameRateRange;
 }
 
 QRect QIOSScreen::geometry() const

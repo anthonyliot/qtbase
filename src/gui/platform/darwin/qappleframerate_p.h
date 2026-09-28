@@ -118,8 +118,9 @@ class Q_GUI_EXPORT QAppleFrameRatePreference
 public:
     static constexpr const char *propertyName = "_q_preferredFrameRateRange";
 
-    // Re-reads the preference of the window, and returns the resulting range
-    QAppleFrameRateRange update(const QWindow *window);
+    // Re-reads the preference of the window on a display refreshing at
+    // displayRate (0 if unknown), and returns the resulting range
+    QAppleFrameRateRange update(const QWindow *window, qreal displayRate);
     QAppleFrameRateRange range() const { return m_range; }
 
     bool shouldDeliverFrame(double targetTimestamp, double linkFrameInterval) const noexcept
@@ -140,9 +141,53 @@ public:
 
 private:
     QVariant m_value;
+    QAppleFrameRateRange m_requested; // parsed from m_value, or the environment default
     QAppleFrameRateRange m_range;
     double m_lastTargetTimestamp = 0;
     bool m_valueWasInvalid = false;
+};
+
+// Delivers a display link frame to the windows on a screen that are due for it,
+// and works out the frame rate range the display link needs. Shared by the
+// cocoa and ios platform plugins, and tested without a display.
+class Q_GUI_EXPORT QAppleDisplayLinkDelivery
+{
+public:
+    // A display link callback
+    struct Frame
+    {
+        double targetTimestamp = 0; // when the frame is going to be displayed, in seconds
+        double linkFrameInterval = 0; // the display link's current frame interval, in seconds
+        qreal displayRate = 0; // the display's refresh rate, 0 if unknown
+    };
+
+    // What the platform plugin provides about a screen with a display link
+    class Screen
+    {
+    public:
+        virtual ~Screen();
+        // Whether the window is on this screen, has a platform window, and
+        // gets its update requests from the display link
+        virtual bool updatesWithDisplayLink(const QWindow *window) const = 0;
+        // Only called for windows that updatesWithDisplayLink() is true for
+        virtual QAppleFrameRatePreference &frameRatePreference(const QWindow *window) = 0;
+        // Delivers the window's pending update request, and returns false if
+        // the platform window deferred it. May create and destroy windows.
+        virtual bool deliverUpdateRequest(QWindow *window) = 0;
+    };
+
+    // Delivers the pending update requests of the windows that are due for the
+    // frame, including those that get an update request while delivering to
+    // another window, so that the order of the windows doesn't matter. Sets
+    // QWindowPrivate::updateRequestInterval during each delivery. Returns the
+    // range the display link needs for the windows that have pending update
+    // requests afterwards, or std::nullopt if there are none, and the display
+    // link can be paused.
+    static std::optional<QAppleFrameRateRange> deliver(Screen &screen, const Frame &frame);
+
+    // The range the display link needs for the windows that have pending
+    // update requests, or std::nullopt if there are none
+    static std::optional<QAppleFrameRateRange> pendingRange(Screen &screen, qreal displayRate);
 };
 
 QT_END_NAMESPACE

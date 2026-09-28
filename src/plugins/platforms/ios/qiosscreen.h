@@ -50,6 +50,7 @@ public:
 #endif
 
     void setUpdatesPaused(bool);
+    bool hasDisplayLink() const { return m_displayLink != nullptr; }
 
     void updateProperties();
 

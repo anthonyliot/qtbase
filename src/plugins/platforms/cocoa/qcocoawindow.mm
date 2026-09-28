@@ -1907,9 +1907,9 @@ bool QCocoaWindow::pacesUpdateRequests() const
 {
     // Only for windows that explicitly asked for a frame rate, not for the
     // environment variable default, as that would apply to every window.
-    return updatesWithDisplayLink()
-            && (window()->preferredFrameRate() > 0
-                || window()->property(QAppleFrameRatePreference::propertyName).isValid());
+    return (window()->preferredFrameRate() > 0
+            || window()->property(QAppleFrameRatePreference::propertyName).isValid())
+            && updatesWithDisplayLink();
 }
 
 /*
@@ -1925,11 +1925,21 @@ void QCocoaWindow::stopFallbackUpdateTimer()
 
 bool QCocoaWindow::updatesWithDisplayLink() const
 {
-    // Update via the display link if Vsync is enabled
-    return format().swapInterval() != 0;
+    // Update via the display link if Vsync is enabled. Not using format(),
+    // as that also parses the view's color space, for every update request.
+    return window()->requestedFormat().swapInterval() != 0;
 }
 
 void QCocoaWindow::deliverUpdateRequest()
+{
+    tryDeliverUpdateRequest();
+}
+
+/*
+    Delivers the pending update request, unless it has to be deferred because
+    the Metal layer needs display, and returns whether it was delivered.
+*/
+bool QCocoaWindow::tryDeliverUpdateRequest()
 {
     qCDebug(lcQpaDrawing) << "Delivering update request to" << window();
     QScopedValueRollback<bool> blocker(m_deliveringUpdateRequest, true);
@@ -1942,7 +1952,7 @@ void QCocoaWindow::deliverUpdateRequest()
         if (!qtMetalLayer.displayLock.tryLockForRead()) {
             qCDebug(lcQpaDrawing) << "Deferring update request"
                 << "due to" << qtMetalLayer << "needing display";
-            return;
+            return false;
         }
 
         // But we don't hold the lock, as the update request can recurse
@@ -1951,6 +1961,7 @@ void QCocoaWindow::deliverUpdateRequest()
     }
 
     QPlatformWindow::deliverUpdateRequest();
+    return true;
 }
 
 void QCocoaWindow::requestActivateWindow()

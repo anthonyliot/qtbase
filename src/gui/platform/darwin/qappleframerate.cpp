@@ -10,9 +10,10 @@
 #include <QtCore/qmap.h>
 #include <QtCore/qstringlist.h>
 #include <QtCore/qvarlengtharray.h>
+#include <QtCore/qpointer.h>
+#include <QtGui/qguiapplication.h>
 #include <QtGui/qwindow.h>
-
-#include <QtGui/qscreen.h>
+#include <QtGui/private/qwindow_p.h>
 
 #include <algorithm>
 #include <cmath>
@@ -323,11 +324,26 @@ QAppleFrameRateRange QAppleFrameRatePreference::environmentDefault()
     return range;
 }
 
-QAppleFrameRateRange QAppleFrameRatePreference::update(const QWindow *window)
+// A range asking for the display's maximum rate, without a lower preferred
+// rate, is what the system does by default anyway. Passed on explicitly, such
+// ranges ((120, 120, 120) and (1, 120, 0) on a 120 Hz ProMotion display) were
+// seen to make the display link stop delivering, which isn't understood, so
+// use the default range for them.
+static QAppleFrameRateRange withoutExplicitMaximum(const QAppleFrameRateRange &range,
+                                                   qreal displayRate)
+{
+    if (range.isDefault() || !(displayRate > 0))
+        return range;
+    const double maximum = displayRate * 0.99;
+    if (range.maximum >= maximum && (range.preferred == 0 || range.preferred >= maximum))
+        return QAppleFrameRateRange();
+    return range;
+}
+
+QAppleFrameRateRange QAppleFrameRatePreference::update(const QWindow *window, qreal displayRate)
 {
     // The public API wins over the (unsupported) property and environment variable
     if (const qreal preferredFrameRate = window->preferredFrameRate(); preferredFrameRate > 0) {
-        const qreal displayRate = window->screen() ? window->screen()->refreshRate() : 0;
         const auto range = QAppleFrameRateRange::forPreferredFrameRate(preferredFrameRate, displayRate);
         if (range != m_range)
             qCDebug(lcFrameRate) << window << "prefers" << preferredFrameRate << "fps, using" << range;
@@ -341,30 +357,104 @@ QAppleFrameRateRange QAppleFrameRatePreference::update(const QWindow *window)
     if (!value.isValid()) {
         m_value = QVariant();
         m_valueWasInvalid = false;
-        m_range = environmentDefault();
-        return m_range;
-    }
-
-    if (value == m_value)
-        return m_range;
-    m_value = value;
-
-    if (auto parsed = QAppleFrameRateRange::fromVariant(value)) {
-        if (*parsed != m_range)
-            qCDebug(lcFrameRate) << window << "prefers" << *parsed;
-        m_range = *parsed;
-        m_valueWasInvalid = false;
-    } else {
-        // Types such as QJSValue don't compare equal to themselves,
-        // so only warn when going from a valid to an invalid value.
-        if (!m_valueWasInvalid) {
-            qCWarning(lcFrameRate) << "Ignoring invalid" << propertyName << value << "on" << window
-                                   << "- using the system default frame rate";
+        m_requested = environmentDefault();
+    } else if (value != m_value) {
+        m_value = value;
+        if (auto parsed = QAppleFrameRateRange::fromVariant(value)) {
+            m_requested = *parsed;
+            m_valueWasInvalid = false;
+        } else {
+            // Types such as QJSValue don't compare equal to themselves,
+            // so only warn when going from a valid to an invalid value.
+            if (!m_valueWasInvalid) {
+                qCWarning(lcFrameRate) << "Ignoring invalid" << propertyName << value << "on"
+                                       << window << "- using the system default frame rate";
+            }
+            m_valueWasInvalid = true;
+            m_requested = QAppleFrameRateRange();
         }
-        m_valueWasInvalid = true;
-        m_range = QAppleFrameRateRange();
     }
+
+    const auto range = withoutExplicitMaximum(m_requested, displayRate);
+    if (range != m_range)
+        qCDebug(lcFrameRate) << window << "prefers" << m_requested << "- using" << range;
+    m_range = range;
     return m_range;
+}
+
+QAppleDisplayLinkDelivery::Screen::~Screen() = default;
+
+static bool hasPendingUpdateRequest(QWindow *window)
+{
+    return QWindowPrivate::get(window)->updateRequestPending;
+}
+
+std::optional<QAppleFrameRateRange> QAppleDisplayLinkDelivery::deliver(Screen &screen,
+                                                                     const Frame &frame)
+{
+    // Delivering to a window may destroy other windows
+    QVarLengthArray<QPointer<QWindow>, 16> windows;
+    for (QWindow *window : QGuiApplication::allWindows()) {
+        if (screen.updatesWithDisplayLink(window))
+            windows.append(window);
+    }
+
+    const auto deliverIfDue = [&](QWindow *window) {
+        auto &preference = screen.frameRatePreference(window);
+        preference.update(window, frame.displayRate);
+        if (!preference.shouldDeliverFrame(frame.targetTimestamp, frame.linkFrameInterval))
+            return;
+
+        const QPointer<QWindow> guard(window);
+        QWindowPrivate::get(window)->updateRequestInterval =
+                preference.effectiveFrameInterval(frame.linkFrameInterval);
+        const bool delivered = screen.deliverUpdateRequest(window);
+        if (!guard)
+            return;
+        // Only valid during delivery, so that frames driven by other means,
+        // such as expose events, don't use the paced interval
+        QWindowPrivate::get(guard)->updateRequestInterval = 0;
+        // A deferred update request is delivered on the next display link
+        // frame, instead of waiting for the next paced one
+        if (delivered && screen.updatesWithDisplayLink(guard))
+            screen.frameRatePreference(guard).frameDelivered(frame.targetTimestamp);
+    };
+
+    QVarLengthArray<bool, 16> visited(windows.size());
+    std::fill(visited.begin(), visited.end(), false);
+    for (qsizetype i = 0; i < windows.size(); ++i) {
+        QWindow *window = windows.at(i);
+        if (!window || !screen.updatesWithDisplayLink(window) || !hasPendingUpdateRequest(window))
+            continue;
+        visited[i] = true;
+        deliverIfDue(window);
+    }
+
+    // Windows that got an update request while delivering to a window after
+    // them, e.g. when one window drives the frames of another
+    for (qsizetype i = 0; i < windows.size(); ++i) {
+        QWindow *window = windows.at(i);
+        if (visited.at(i) || !window || !screen.updatesWithDisplayLink(window)
+            || !hasPendingUpdateRequest(window)) {
+            continue;
+        }
+        deliverIfDue(window);
+    }
+
+    return pendingRange(screen, frame.displayRate);
+}
+
+std::optional<QAppleFrameRateRange> QAppleDisplayLinkDelivery::pendingRange(Screen &screen,
+                                                                          qreal displayRate)
+{
+    std::optional<QAppleFrameRateRange> range;
+    for (QWindow *window : QGuiApplication::allWindows()) {
+        if (!screen.updatesWithDisplayLink(window) || !hasPendingUpdateRequest(window))
+            continue;
+        const auto windowRange = screen.frameRatePreference(window).update(window, displayRate);
+        range = range ? range->unitedWith(windowRange, displayRate) : windowRange;
+    }
+    return range;
 }
 
 QT_END_NAMESPACE

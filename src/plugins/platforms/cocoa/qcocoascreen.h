@@ -10,6 +10,7 @@
 #include <qpa/qplatformintegration.h>
 #include <QtCore/private/qcore_mac_p.h>
 
+#include <chrono>
 #include <memory>
 
 #include <CoreGraphics/CoreGraphics.h>
@@ -104,8 +105,12 @@ private:
     CADisplayLink *m_displayLink = nullptr;
     bool m_deliveringUpdateRequests = false;
     bool m_nestedEventLoopInDelivery = false;
-    std::unique_ptr<QTimer> m_nestedDeliveryWatchdog;
-    void handleNestedEventLoopInDelivery();
+    int m_displayLinkRecoveries = 0;
+    std::unique_ptr<QTimer> m_displayLinkWatchdog;
+    void startDisplayLinkWatchdog(std::chrono::milliseconds timeout);
+    std::chrono::milliseconds displayLinkStallTimeout() const;
+    void displayLinkWatchdogTimeout();
+    void fallBackToTimerBasedUpdateRequests();
 
     bool hasPendingUpdateRequests() const;
     void maybePauseDisplayLink();
