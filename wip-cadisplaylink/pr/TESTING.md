@@ -41,7 +41,28 @@ Before these fixes, on the same loaded machine: `requestUpdateRate` measured 130
   link and frame-rate tests 39 passed, 5 skipped (60 Hz simulator: 24 and 60 not both exact; no
   timer path; no nested loops on iOS; one screen; swap interval 0).
 
-### The Gerrit series, commit by commit (R1-7)
+### The Gerrit series after review round 2 (R2-2)
+
+Rebuilt from scratch on the base with `/tmp/r2/series.sh`, each state's tree recorded
+(`/tmp/r2/series-trees.txt`) and then committed with `/tmp/r2/replay.sh`, which refuses a commit
+whose tree differs from the tested one. Machine load during the run: 1-minute load average from 117
+to 594 (another build).
+
+| Commit | Build | Tests at that commit |
+|---|---|---|
+| G1 | QtGui, cocoa plugin, tst_qwindow | 7 delivery functions pass (9 with init/cleanup) **on the old CVDisplayLink plugin** |
+| G2 | cocoa plugin, tst_qwindow | 9 pass (+ driven window, nested loop); the link reports its interval |
+| G3 | QtGui | doc only |
+| G4 | QtGui, cocoa plugin, tst_qwindow | 11 pass (+ property, timer pacing) |
+| G5a | QtGui, tst_qappleframerate | 151/151 |
+| G5b | not built here (iOS sources only) | iOS at the final state, below |
+| G5c | cocoa plugin, tst_qwindow, tst_qappleframerate | display link and frame-rate tests: 43 passed, 1 skipped (two screens) |
+| G6 | QtGui, Widgets, tst_qwidgetrepaintmanager | 18 passed, 1 failed (`scrollWithOverlap`, `qWaitForWindowActive`, focus) |
+| G7 | displaylink, standalone against the series build | `--rate 30`: 30.0/s on 240 Hz |
+
+The final state equals the snapshot of the wip branch's files (checked file by file).
+
+### The Gerrit series, first version (round 1, superseded)
 
 Separate worktree and build (`qt5-series-build`: Debug developer build, non-framework, tests on
 demand, sql/network/dbus/printsupport off).

@@ -59,22 +59,22 @@ worktrees under `~/Desktop/bitbucket/qt5-series/`, branches `wip/cadisplaylink-g
 is identical to `wip/cadisplaylink` without `wip-cadisplaylink/`. Built and tested commit by commit,
 see [TESTING.md](TESTING.md). Documents: [series/](series/).
 
-| # | qtbase commit | Contains (old commits) |
+| # | qtbase commit (`wip/cadisplaylink-gerrit`) | Contains (old commits) |
 |---|---|---|
-| [G1](series/G1-tests-delivery.md) | tst_QWindow: Test the rate and delivery of update requests | 07, 19 (baseline part) |
-| [G2](series/G2-cadisplaylink.md) | cocoa: Replace CVDisplayLink with CADisplayLink for update requests | 03, 09 (private interval), 10 (cocoa part), 16, 17, 18, 20, 28, 29; R1-1, R1-4, R1-5, R2-1 |
-| [G3](series/G3-doc.md) | Doc: Refer to CADisplayLink instead of CVDisplayLink | 05 |
-| [G4](series/G4-qwindow-api.md) | Add QWindow::preferredFrameRate | 22 (generic parts); R1-6 |
-| [G5a](series/G5a-framerate-model.md) | Add a shared model of display link frame rates for Apple platforms | 02, 09 (helper part), 15, 23 (helper part), 30; R1-1, R1-2, R1-3, R1-11, R1-12 |
-| [G5b](series/G5b-ios.md) | ios: Pace update requests to the windows' preferred frame rates | 06, 10, 16, 18, 23 (iOS parts); R1-9, m9 |
-| [G5c](series/G5c-cocoa.md) | cocoa: Pace update requests to the windows' preferred frame rates | 04, 10, 23, 25 (cocoa parts), the Apple parts of the property doc |
-| [G6](series/G6-widgets.md) | Widgets: Pace top-level updates when the window has a preferred rate | 24, 32; R1-8, R1-13; the Widgets part of the property doc |
-| [G7](series/G7-manual-test.md) | Add a manual test for update request pacing and frame rates | 08, 11, 14, 26 |
+| [G1](series/G1-tests-delivery.md) | `33df309acc2` tst_QWindow: Test the rate and delivery of update requests | 07, 19 (baseline part) |
+| [G2](series/G2-cadisplaylink.md) | `0bb7668b5f5` cocoa: Replace CVDisplayLink with CADisplayLink for update requests | 03, 09 (private interval), 10 (cocoa part), 16, 17, 18, 20, 28, 29; R1-1, R1-4, R1-5, R2-1 |
+| [G3](series/G3-doc.md) | `e540b6b2c69` Doc: Refer to CADisplayLink instead of CVDisplayLink | 05 |
+| [G4](series/G4-qwindow-api.md) | `4ecd0f4a096` Add QWindow::preferredFrameRate | 22 (generic parts); R1-6 |
+| [G5a](series/G5a-framerate-model.md) | `d6efb26498f` Add a shared model of display link frame rates for Apple platforms | 02, 09 (helper part), 15, 23 (helper part), 30; R1-1, R1-2, R1-3, R1-11, R1-12 |
+| [G5b](series/G5b-ios.md) | `bfdd5bad25a` ios: Pace update requests to the windows' preferred frame rates | 06, 10, 16, 18, 23 (iOS parts); R1-9, m9 |
+| [G5c](series/G5c-cocoa.md) | `eaeb583f860` cocoa: Pace update requests to the windows' preferred frame rates | 04, 10, 23, 25 (cocoa parts), the Apple parts of the property doc |
+| [G6](series/G6-widgets.md) | `fc439691c5e` Widgets: Pace top-level updates when the window has a preferred rate | 24, 32; R1-8, R1-13; the Widgets part of the property doc |
+| [G7](series/G7-manual-test.md) | `09ff153f888` Add a manual test for update request pacing and frame rates | 08, 11, 14, 26 |
 
-| # | qtdeclarative commit | Contains (old commits) |
+| # | qtdeclarative commit (`wip/cadisplaylink-gerrit`) | Contains (old commits) |
 |---|---|---|
-| [D1](series/D1-animation-interval.md) | Advance vsync based animations by the window's frame interval | 01-04, 06, the Animator test fixes |
-| [D2](series/D2-qml-doc-tests.md) | Document Window.preferredFrameRate, and test it from QML | 05, R1-6/R1-10 fixes |
+| [D1](series/D1-animation-interval.md) | `7c4be21eb2` Advance vsync based animations by the window's frame interval | 01-04, 06, the Animator test fixes |
+| [D2](series/D2-qml-doc-tests.md) | `d8bc4071be` Document Window.preferredFrameRate, and test it from QML | 05, R1-6/R1-10 fixes |
 
 ## Commits of the working branches and their documents
 

@@ -83,8 +83,15 @@ written, the state's `git write-tree` is recorded (`/tmp/r2/series-trees.txt`,
 signing works, the commits are created from the same files, and each commit's tree must equal the
 recorded tree, which proves that what's committed is what was tested. Results: TESTING.md.
 
-Commit signing (AppleConnect) is still blocked: nothing new is committed in any repo since round 1,
-including the R2 fixes on the wip branches (uncommitted in the working trees: qtbase
-`qcocoascreen.{h,mm}`, `tst_qwindow.cpp`, `tst_qwidgetrepaintmanager.cpp`, the PR docs;
-qtdeclarative `scenegraph.qdoc` and the staged `tst_qquickanimations.cpp`). The old G1 commit
-`7dc93d4377b` was dropped with the restructuring (never pushed).
+**Committed** (signing works again): every commit's tree equals its recorded tested tree, and both
+series heads equal the wip branches (`git diff wip/cadisplaylink HEAD` is empty in both repos, apart
+from `wip-cadisplaylink/` in qtbase).
+
+* qtbase `wip/cadisplaylink-gerrit`: G1 `33df309acc2`, G2 `0bb7668b5f5`, G3 `e540b6b2c69`,
+  G4 `4ecd0f4a096`, G5a `d6efb26498f`, G5b `bfdd5bad25a`, G5c `eaeb583f860`, G6 `fc439691c5e`,
+  G7 `09ff153f888`.
+* qtdeclarative `wip/cadisplaylink-gerrit`: D1 `7c4be21eb2`, D2 `d8bc4071be`.
+* wip branches: qtbase `26ebb2c1559` (R2-1), `156c44caf6b` (R2-2, R2-3), then the WIP docs;
+  qtdeclarative `71025ea33e` (Animator skip when covered), `62d1e64eeb` (R2-3 link).
+
+The old G1 commit `7dc93d4377b` was dropped with the restructuring (never pushed).
