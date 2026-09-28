@@ -12,6 +12,7 @@
 #include "qcocoaintegration.h"
 
 #include <QtCore/qcoreapplication.h>
+#include <QtCore/qtimer.h>
 #include <QtGui/private/qcoregraphics_p.h>
 
 #include <IOKit/graphics/IOGraphicsLib.h>
@@ -417,7 +418,7 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
         m_nestedDeliveryWatchdog = std::make_unique<QTimer>();
         m_nestedDeliveryWatchdog->setSingleShot(true);
         QObject::connect(m_nestedDeliveryWatchdog.get(), &QTimer::timeout,
-                         [this] { handleNestedEventLoopInDelivery(); });
+                         m_nestedDeliveryWatchdog.get(), [this] { handleNestedEventLoopInDelivery(); });
     }
     m_nestedDeliveryWatchdog->start(std::max(50, int(frameInterval * 3000)));
     auto stopWatchdog = qScopeGuard([this] {

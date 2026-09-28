@@ -9,7 +9,6 @@
 
 #include <qpa/qplatformintegration.h>
 #include <QtCore/private/qcore_mac_p.h>
-#include <QtCore/qtimer.h>
 
 #include <memory>
 
@@ -23,6 +22,7 @@ Q_FORWARD_DECLARE_OBJC_CLASS(CADisplayLink);
 QT_BEGIN_NAMESPACE
 
 class QCocoaIntegration;
+class QTimer;
 struct QAppleFrameRateRange;
 
 class QCocoaScreen : public QPlatformScreen, public QNativeInterface::QCocoaScreen
