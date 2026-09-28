@@ -1327,6 +1327,15 @@ qreal QWindow::opacity() const
     Setting a negative or non-finite value prints a warning and sets the
     property to 0.
 
+    For Qt Widgets, set this property on the window of the top-level widget,
+    see QWidget::windowHandle(), which exists once the widget has been shown or
+    QWidget::winId() has been called. The value is kept when the widget's
+    window is recreated. On macOS and iOS, with vertical sync enabled, updates
+    scheduled with QWidget::update() in that window are then paced as well,
+    including the content of QOpenGLWidget and QRhiWidget. QWidget::repaint()
+    is not paced, except that for windows with such widgets it may be deferred
+    to the next frame, like without a preferred frame rate.
+
     \note Pacing to the display refresh is currently implemented on macOS and
     iOS. On platforms that deliver update requests with a timer, such as X11,
     Android, eglfs and offscreen, the preferred frame rate is the minimum

@@ -8,13 +8,22 @@
 #include <QScrollBar>
 #include <QApplication>
 #include <QMainWindow>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
+#include <QPointer>
+#include <QRhiWidget>
+#include <rhi/qrhi.h>
 
 #include <private/qhighdpiscaling_p.h>
 #include <private/qwidget_p.h>
 #include <private/qwidgetrepaintmanager_p.h>
+#include <QtGui/private/qwindow_p.h>
 #include <qpa/qplatformintegration.h>
 #include <qpa/qplatformbackingstore.h>
 #include <private/qguiapplication_p.h>
+
+#include <algorithm>
 
 //#define MANUAL_DEBUG
 
@@ -270,6 +279,10 @@ private slots:
     void fastMove();
     void moveAccross();
     void moveInOutOverlapped();
+    void pacedUpdates_data();
+    void pacedUpdates();
+    void pacedUpdatesSemantics();
+    void pacedUpdatesAfterRecreate();
 
 protected:
     /*
@@ -1079,6 +1092,261 @@ void tst_QWidgetRepaintManager::moveInOutOverlapped()
     QVERIFY(compareWidget(&scene));
 }
 #endif //# defined(QT_BUILD_INTERNAL)
+
+
+namespace {
+
+// The interval the window's update requests are paced at, during delivery
+double updateRequestInterval(const QWidget *widget)
+{
+    const QWindow *window = widget->window()->windowHandle();
+    return window ? QWindowPrivate::get(const_cast<QWindow *>(window))->updateRequestInterval : 0;
+}
+
+// A widget that keeps scheduling updates, like an animated view
+class AnimatingWidget : public QWidget
+{
+public:
+    int paints = 0;
+    double interval = 0; // updateRequestInterval() during the last paint
+    bool animating = true;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        ++paints;
+        interval = updateRequestInterval(this);
+        QPainter(this).fillRect(rect(), paints % 2 ? Qt::red : Qt::blue);
+        if (animating)
+            update();
+    }
+};
+
+class AnimatingRhiWidget : public QRhiWidget
+{
+public:
+    int frames = 0;
+    double interval = 0; // updateRequestInterval() during the last frame
+    bool animating = true;
+
+protected:
+    void render(QRhiCommandBuffer *cb) override
+    {
+        ++frames;
+        interval = updateRequestInterval(this);
+        cb->beginPass(renderTarget(), frames % 2 ? Qt::red : Qt::blue, { 1.0f, 0 });
+        cb->endPass();
+        if (animating)
+            update();
+    }
+};
+
+void spinEventLoop(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, Qt::PreciseTimer, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+bool displayPacesUpdateRequests()
+{
+    return QGuiApplication::platformName() == QLatin1String("cocoa")
+            || QGuiApplication::platformName() == QLatin1String("ios");
+}
+
+// The number of display refreshes per frame for QWindow::preferredFrameRate, see
+// the same function in tst_qwindow
+int framesForPreferredRate(double refreshRate, double preferred)
+{
+    const int wholeRate = qRound(refreshRate);
+    int n = int(std::clamp(refreshRate / (preferred * 0.99), 1.0, double(std::max(1, wholeRate))));
+    while (n > 1 && wholeRate % n != 0)
+        --n;
+    return n;
+}
+
+} // namespace
+
+void tst_QWidgetRepaintManager::pacedUpdates_data()
+{
+    QTest::addColumn<bool>("rhiWidget");
+    QTest::newRow("raster") << false;
+    QTest::newRow("QRhiWidget") << true;
+}
+
+void tst_QWidgetRepaintManager::pacedUpdates()
+{
+    if (!displayPacesUpdateRequests())
+        QSKIP("Update requests are not paced by the display on this platform");
+    QFETCH(bool, rhiWidget);
+#if QT_CONFIG(metal)
+    if (rhiWidget) {
+        QRhiMetalInitParams params;
+        if (!QRhi::probe(QRhi::Metal, &params))
+            QSKIP("Metal is not available");
+    }
+#endif
+
+    // A top-level with a preferred frame rate paces the updates of its widgets,
+    // including render-to-texture ones like QRhiWidget
+    QWidget topLevel;
+    topLevel.setWindowFlag(Qt::WindowStaysOnTopHint); // a covered window isn't exposed
+    topLevel.resize(320, 240);
+    AnimatingWidget *rasterChild = nullptr;
+    AnimatingRhiWidget *rhiChild = nullptr;
+    if (rhiWidget)
+        rhiChild = new AnimatingRhiWidget;
+    else
+        rasterChild = new AnimatingWidget;
+    QWidget *child = rhiWidget ? static_cast<QWidget *>(rhiChild) : rasterChild;
+    child->setParent(&topLevel);
+    child->setGeometry(10, 10, 200, 200);
+    topLevel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
+
+    const auto frames = [&] { return rhiWidget ? rhiChild->frames : rasterChild->paints; };
+    const auto measure = [&] {
+        spinEventLoop(200);
+        const int before = frames();
+        QElapsedTimer timer;
+        timer.start();
+        spinEventLoop(500);
+        return (frames() - before) / (timer.nsecsElapsed() / 1e9);
+    };
+
+    const double unpacedRate = measure();
+    const double refreshRate = topLevel.screen()->refreshRate();
+    if (refreshRate < 60)
+        QSKIP("Screen refresh rate too low for this test");
+    const int n = framesForPreferredRate(refreshRate, 30);
+    const double expectedRate = refreshRate / n;
+
+    topLevel.windowHandle()->setPreferredFrameRate(30);
+    const double pacedRate = measure();
+    if (!topLevel.windowHandle()->isExposed())
+        QSKIP("The window got covered by another window during the test");
+
+    // Missed frames on a loaded machine make the rate lower, so the rate
+    // itself is only checked loosely. The interval the widgets are paced at,
+    // n refreshes, tells the exact rates apart (e.g. 24 from 30).
+    QVERIFY2(pacedRate > expectedRate * 0.6 && pacedRate < expectedRate * 1.1,
+             qPrintable(QStringLiteral("%1 frames per second at %2 fps (%3 without)")
+                                .arg(pacedRate).arg(expectedRate).arg(unpacedRate)));
+    const double interval = rhiWidget ? rhiChild->interval : rasterChild->interval;
+    QVERIFY2(qAbs(interval - n / refreshRate) < 0.5 / refreshRate,
+             qPrintable(QStringLiteral("paced at %1 s, expected %2 s").arg(interval).arg(n / refreshRate)));
+    QVERIFY2(unpacedRate > expectedRate * 1.5,
+             qPrintable(QStringLiteral("%1 frames per second without a preference").arg(unpacedRate)));
+
+    // Back to the previous behavior without a preference
+    topLevel.windowHandle()->resetPreferredFrameRate();
+    const double resetRate = measure();
+    if (!topLevel.windowHandle()->isExposed())
+        QSKIP("The window got covered by another window during the test");
+    QVERIFY2(resetRate > expectedRate * 1.5,
+             qPrintable(QStringLiteral("%1 frames per second after resetting the preference "
+                                       "(%2 before setting it)").arg(resetRate).arg(unpacedRate)));
+
+    if (rhiChild)
+        rhiChild->animating = false;
+    else
+        rasterChild->animating = false;
+}
+
+void tst_QWidgetRepaintManager::pacedUpdatesSemantics()
+{
+    if (!displayPacesUpdateRequests())
+        QSKIP("Update requests are not paced by the display on this platform");
+
+    AnimatingWidget topLevel;
+    topLevel.animating = false;
+    topLevel.setWindowFlag(Qt::WindowStaysOnTopHint);
+    topLevel.resize(200, 200);
+    topLevel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
+    QWindow *window = topLevel.windowHandle();
+    window->setPreferredFrameRate(30);
+    QTRY_VERIFY(!QWindowPrivate::get(window)->updateRequestPending);
+
+    // update() goes through the window's update request, not a posted event.
+    // An expose event may sync it before it's delivered, in which case the
+    // delivery repaints once more (it may stand for a coalesced external request).
+    int paints = topLevel.paints;
+    topLevel.update();
+    QVERIFY(QWindowPrivate::get(window)->updateRequestPending);
+    QCoreApplication::sendPostedEvents(&topLevel, QEvent::UpdateRequest);
+    QCOMPARE(topLevel.paints, paints);
+    QTRY_VERIFY(topLevel.paints > paints);
+    QTRY_VERIFY(!QWindowPrivate::get(window)->updateRequestPending);
+
+    // repaint() stays synchronous
+    paints = topLevel.paints;
+    topLevel.repaint();
+    QCOMPARE(topLevel.paints, paints + 1);
+
+    // update() followed by repaint(), like buttons do, paints once: the paced
+    // update request finds nothing left to do
+    QTRY_VERIFY(!QWindowPrivate::get(window)->updateRequestPending);
+    paints = topLevel.paints;
+    topLevel.update();
+    topLevel.repaint();
+    QCOMPARE(topLevel.paints, paints + 1);
+    QTRY_VERIFY(!QWindowPrivate::get(window)->updateRequestPending);
+    spinEventLoop(100);
+    QCOMPARE(topLevel.paints, paints + 1);
+
+    // An update request for the window itself still repaints it...
+    paints = topLevel.paints;
+    window->requestUpdate();
+    QTRY_VERIFY(topLevel.paints > paints);
+    // ...and doesn't keep repainting: a loop at 30 fps would paint about 9
+    // times in 300 ms, allow for a stray expose event from the system
+    spinEventLoop(100);
+    paints = topLevel.paints;
+    spinEventLoop(300);
+    QVERIFY2(topLevel.paints - paints <= 2,
+             qPrintable(QStringLiteral("%1 paints in 300 ms").arg(topLevel.paints - paints)));
+
+    // And it keeps working after the window is hidden and shown again
+    topLevel.hide();
+    topLevel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
+    const int paintsAfterShow = topLevel.paints;
+    topLevel.update();
+    QTRY_VERIFY(topLevel.paints > paintsAfterShow);
+}
+
+void tst_QWidgetRepaintManager::pacedUpdatesAfterRecreate()
+{
+    // The preferred frame rate survives the top-level's window being
+    // destroyed and created again, e.g. when reparenting it
+    QWidget topLevel;
+    topLevel.resize(200, 200);
+    topLevel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
+    topLevel.windowHandle()->setPreferredFrameRate(30);
+    QPointer<QWindow> windowBefore = topLevel.windowHandle();
+
+    QWidget container;
+    topLevel.setParent(&container);
+    QVERIFY(!windowBefore);
+    topLevel.setParent(nullptr);
+    topLevel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&topLevel));
+    QVERIFY(topLevel.windowHandle());
+    QCOMPARE(topLevel.windowHandle()->preferredFrameRate(), 30.0);
+
+    // And it keeps pacing the widget's updates, with QWindow::requestUpdate()
+    // instead of posted update request events
+    if (displayPacesUpdateRequests()) {
+        auto *repaintManager = QWidgetPrivate::get(&topLevel)->maybeRepaintManager();
+        QVERIFY(repaintManager);
+        QVERIFY(repaintManager->usesPacedUpdateRequests());
+        QTRY_VERIFY(!QWindowPrivate::get(topLevel.windowHandle())->updateRequestPending);
+        topLevel.update();
+        QVERIFY(QWindowPrivate::get(topLevel.windowHandle())->updateRequestPending);
+    }
+}
 
 QTEST_MAIN(tst_QWidgetRepaintManager)
 #include "tst_qwidgetrepaintmanager.moc"
