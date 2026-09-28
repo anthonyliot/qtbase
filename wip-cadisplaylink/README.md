@@ -33,8 +33,9 @@ Window { preferredFrameRate: player.playing ? 24000 / 1001 : 60 }
 Qt Widgets: set it on the top-level's window, `widget->windowHandle()->setPreferredFrameRate(30)`;
 `update()` in that window (including QOpenGLWidget/QRhiWidget content) is then paced.
 
-Qt picks the exact rate the display can show (refresh / n) closest to the preferred rate but not
-below it, so 25 gives 30 on 120 Hz (see VIDEO.md). Windows with different rates stay exact
+Qt picks the slowest exact rate the display can show (refresh / n, where that is a whole number of
+frames per second, the only rates CoreAnimation supports) that's not below the preferred rate, so 25
+gives 30 on 120 and 240 Hz (see VIDEO.md). Windows with different rates stay exact
 together.
 
 Multiple displays: each screen has its own CADisplayLink, created from its NSScreen/UIScreen, so a

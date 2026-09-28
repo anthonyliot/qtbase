@@ -22,6 +22,24 @@ The panel readings for 60 and above couldn't be taken cleanly: while measuring, 
 the panel at a constant 30 Hz, and then at 120 Hz, regardless of our window. Earlier the same day,
 cool-retro-term at 60 fps measured a 60 Hz panel and the default a 120 Hz panel.
 
+## Which rates are exact (240 Hz external display, 2026-09-28)
+
+`probes/divisors.m` asks an NSScreen display link for 240 / n and counts the callbacks:
+
+| n | requested | delivered |
+|---|---|---|
+| 1-6, 8, 10, 12, 15, 16, 20, 24 | 240, 120, 80, 60, 48, 40, 30, 24, 20, 16, 15, 12, 10 | same |
+| 7 | 34.29 | 40 |
+| 9 | 26.67 | 30 |
+| 11 | 21.82 | 24 |
+| 13, 14 | 18.46, 17.14 | 20 |
+
+CoreAnimation only runs a display link at whole rates that divide the refresh rate, and rounds
+other requests up to the next such rate. `QAppleFrameRateRange::forPreferredFrameRate()` now only
+picks those (25 on 240 Hz asks for 30 instead of 26.67, which the system turned into 30 anyway),
+so that its idea of "exact" (used to keep a video and a UI window exact together) matches the
+system's. On the 120 Hz ProMotion panel only n = 1-5 were measured (all divide 120).
+
 ## What it means
 
 * On a 120 Hz ProMotion panel CoreAnimation offers exactly 120 / n: 120, 60, 40, 30, 24 (and 20,
