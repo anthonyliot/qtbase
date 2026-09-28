@@ -1276,6 +1276,70 @@ qreal QWindow::opacity() const
 }
 
 /*!
+    \property QWindow::preferredFrameRate
+    \since 6.13
+    \brief the rate, in frames per second, at which the window prefers to
+    receive update requests.
+
+    Set this property to tell the platform how often the window intends to
+    render new frames while it keeps calling requestUpdate(), for example to
+    match the frame rate of video content, or to limit an animated user
+    interface to 60 or 30 frames per second to save power. On displays with a
+    variable refresh rate, the system can use it to choose a lower refresh rate.
+
+    The rate is a hint. The system may deliver fewer update requests, for
+    instance in low power mode, while the window is covered, or when rendering
+    a frame takes longer than the frame interval.
+
+    Setting this property does not request an update. It paces the update
+    requests the window makes with requestUpdate(), including those made by
+    QPaintDeviceWindow::update() and Qt Quick. Each window is paced on its own,
+    so windows on the same screen can prefer different rates, and one window's
+    preference doesn't slow down another window.
+
+    The default value, 0, means no preference: update requests are delivered at
+    the platform's default rate, which is the refresh rate of the display on
+    macOS and iOS, and every few milliseconds on platforms that deliver update
+    requests with a timer.
+    Setting a negative or non-finite value prints a warning and sets the
+    property to 0.
+
+    \note On platforms that deliver update requests with a timer, such as X11,
+    Android, eglfs and offscreen, the preferred frame rate is the minimum
+    interval between update requests, which isn't aligned to the display
+    refresh. Other platforms, such as Wayland, Windows with Direct3D vertical
+    sync, and WebAssembly, currently ignore it.
+
+    \sa requestUpdate(), QScreen::refreshRate()
+*/
+void QWindow::setPreferredFrameRate(qreal framesPerSecond)
+{
+    Q_D(QWindow);
+    if (!qIsFinite(framesPerSecond) || framesPerSecond < 0) {
+        qWarning("QWindow::setPreferredFrameRate: Ignoring invalid frame rate %g, "
+                 "using 0 (no preference)", framesPerSecond);
+        framesPerSecond = 0;
+    }
+    if (framesPerSecond == d->preferredFrameRate)
+        return;
+    d->preferredFrameRate = framesPerSecond;
+    if (d->platformWindow)
+        d->platformWindow->setPreferredFrameRate(framesPerSecond);
+    emit preferredFrameRateChanged(framesPerSecond);
+}
+
+qreal QWindow::preferredFrameRate() const
+{
+    Q_D(const QWindow);
+    return d->preferredFrameRate;
+}
+
+void QWindow::resetPreferredFrameRate()
+{
+    setPreferredFrameRate(0);
+}
+
+/*!
     Sets the mask of the window.
 
     The mask is a hint to the windowing system that the application does not
@@ -2898,6 +2962,9 @@ void QWindowPrivate::maybeSynthesizeContextMenuEvent(QMouseEvent *event)
     has completed. Calling this function multiple times will result in a single
     event being delivered to the window.
 
+    The rate at which update requests are delivered can be limited with
+    preferredFrameRate, for example to match the frame rate of video content.
+
     Subclasses of QWindow should reimplement event(), intercept the event and
     call the application's rendering code, then call the base class
     implementation.
@@ -2909,6 +2976,7 @@ void QWindowPrivate::maybeSynthesizeContextMenuEvent(QMouseEvent *event)
     therefore break the delivery of the update events.
 
     \since 5.5
+    \sa preferredFrameRate
 */
 void QWindow::requestUpdate()
 {

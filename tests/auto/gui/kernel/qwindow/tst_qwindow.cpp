@@ -16,6 +16,7 @@
 #include <QEvent>
 #include <QStyleHints>
 #include <QElapsedTimer>
+#include <QTypeRevision>
 #include <QEventLoop>
 #include <QTimer>
 #include <QThread>
@@ -120,6 +121,8 @@ private slots:
     void requestUpdateForOtherWindowDuringDelivery();
     void requestUpdateAfterHideAndShow();
     void requestUpdateSwapIntervalZero();
+    void preferredFrameRateProperty();
+    void preferredFrameRateTimerPacing();
     void requestUpdateDuringNestedEventLoop();
     void activateDeactivateEvent();
     void qobject_castOnDestruction();
@@ -3538,6 +3541,79 @@ void tst_QWindow::requestUpdateSwapIntervalZero()
     if (QGuiApplication::platformName() == "ios"_L1)
         QSKIP("iOS always paces update requests with the display link");
     QCOMPARE(window.lastUpdateRequestInterval, 0.0);
+}
+
+void tst_QWindow::preferredFrameRateProperty()
+{
+    QWindow window;
+    QSignalSpy spy(&window, &QWindow::preferredFrameRateChanged);
+    QCOMPARE(window.preferredFrameRate(), 0.0);
+
+    window.setPreferredFrameRate(60);
+    QCOMPARE(window.preferredFrameRate(), 60.0);
+    QCOMPARE(spy.size(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toReal(), 60.0);
+    window.setPreferredFrameRate(60);
+    QCOMPARE(spy.size(), 0);
+
+    window.setPreferredFrameRate(24000.0 / 1001);
+    QCOMPARE(window.preferredFrameRate(), 24000.0 / 1001);
+    QCOMPARE(spy.size(), 1);
+
+    window.resetPreferredFrameRate();
+    QCOMPARE(window.preferredFrameRate(), 0.0);
+    QCOMPARE(spy.size(), 2);
+
+    for (const qreal invalid : { -1.0, qQNaN(), qInf() }) {
+        window.setPreferredFrameRate(30);
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression("setPreferredFrameRate: Ignoring invalid"));
+        window.setPreferredFrameRate(invalid);
+        QCOMPARE(window.preferredFrameRate(), 0.0);
+    }
+
+    // Survives creation of the platform window
+    window.setPreferredFrameRate(30);
+    window.create();
+    QCOMPARE(window.preferredFrameRate(), 30.0);
+
+    const QMetaProperty property = window.metaObject()->property(
+            window.metaObject()->indexOfProperty("preferredFrameRate"));
+    QVERIFY(property.isValid());
+    QVERIFY(property.isResettable());
+    QVERIFY(property.hasNotifySignal());
+    QCOMPARE(property.revision(), QTypeRevision::fromVersion(6, 13).toEncodedVersion<int>());
+}
+
+// Platforms whose update requests are timer based (QPlatformWindow's default
+// implementation), at least with vertical sync disabled
+static bool timerBasedUpdateRequests()
+{
+    static const QStringList platforms = { u"xcb"_s, u"offscreen"_s, u"minimal"_s, u"windows"_s,
+                                           u"android"_s, u"eglfs"_s, u"linuxfb"_s, u"cocoa"_s };
+    return platforms.contains(QGuiApplication::platformName());
+}
+
+void tst_QWindow::preferredFrameRateTimerPacing()
+{
+    if (!timerBasedUpdateRequests())
+        QSKIP("Update requests are not timer based on this platform");
+
+    // Timer based update requests (here: vsync disabled) don't go faster
+    // than the preferred frame rate either
+    AnimatingWindow window;
+    QSurfaceFormat format;
+    format.setSwapInterval(0);
+    window.setFormat(format);
+    showAnimatingWindow(window, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    const double unpaced = measureUpdateRates({ &window }).first();
+    window.setPreferredFrameRate(30);
+    const double paced = measureUpdateRates({ &window }).first();
+    qCDebug(lcTests) << "Timer based update rate" << unpaced << "unpaced," << paced << "at 30 fps";
+    QVERIFY2(paced > 30 * 0.7 && paced < 30 * 1.1, qPrintable(QString::number(paced)));
+    QVERIFY2(unpaced > paced * 1.5, qPrintable(QString::number(unpaced)));
 }
 
 void tst_QWindow::requestUpdateDuringNestedEventLoop()

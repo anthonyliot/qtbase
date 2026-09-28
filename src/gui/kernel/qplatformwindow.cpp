@@ -470,7 +470,16 @@ bool QPlatformWindow::windowEvent(QEvent *event)
 
     if (event->type() == QEvent::Timer) {
         if (static_cast<QTimerEvent *>(event)->timerId() == d->updateTimer.timerId()) {
+            // With a preferred frame rate the timer paces the update requests,
+            // let e.g. Qt Quick know by how much to advance animations
+            const qreal preferredFrameRate = window()->preferredFrameRate();
+            if (preferredFrameRate > 0) {
+                const qreal refreshRate = screen() ? screen()->refreshRate() : 0;
+                qt_window_private(window())->updateRequestInterval =
+                        std::max(1.0 / preferredFrameRate, refreshRate > 0 ? 1.0 / refreshRate : 0.0);
+            }
             deliverUpdateRequest();
+            qt_window_private(window())->updateRequestInterval = 0;
             // Delivery of the update request may be circumvented temporarily by the
             // platform window, or the user may request another update during the
             // delivery, so wait to stop the timer until we know we don't need it
@@ -795,9 +804,63 @@ void QPlatformWindow::requestUpdate()
         }
     }
 
+    using namespace std::chrono;
+    nanoseconds interval = milliseconds(updateInterval);
+
+    // Don't deliver faster than the window's preferred frame rate. The timer
+    // isn't aligned to the display refresh, so this is only a minimum interval.
+    const qreal preferredFrameRate = window()->preferredFrameRate();
+    if (preferredFrameRate > 0 && d->lastUpdateRequestDelivery.isValid()) {
+        // At most once an hour for tiny rates, avoiding overflows
+        const auto frameInterval = duration_cast<nanoseconds>(
+                duration<double>(std::min(1.0 / preferredFrameRate, 3600.0)));
+        interval = std::max(interval, frameInterval - d->lastUpdateRequestDelivery.durationElapsed());
+    }
+
     // Start or restart the timer (in case we're called during update
     // request delivery).
-    d->updateTimer.start(updateInterval, Qt::PreciseTimer, window());
+    d->updateTimer.start(interval, Qt::PreciseTimer, window());
+}
+
+/*!
+    Called when the window's \l{QWindow::preferredFrameRate}{preferred frame
+    rate} changes while the platform window exists, with \a framesPerSecond
+    being the new rate, or 0 for no preference.
+
+    Platform windows that pace update requests to the display read the rate
+    from window() when pacing. Reimplement this function to apply a change to
+    pending update requests right away, and call the base implementation.
+
+    The default implementation re-arms a pending timer based update request,
+    see requestUpdate().
+
+    \since 6.13
+    \sa pacesUpdateRequests()
+*/
+void QPlatformWindow::setPreferredFrameRate(qreal framesPerSecond)
+{
+    Q_UNUSED(framesPerSecond);
+    Q_D(QPlatformWindow);
+    // Re-arm a pending timer based update request with the new rate
+    if (d->updateTimer.isActive() && hasPendingUpdateRequest())
+        QPlatformWindow::requestUpdate();
+}
+
+/*!
+    Returns whether requestUpdate() currently paces update requests to the
+    display and to the window's preferred frame rate.
+
+    Clients that schedule their own repaints, such as Qt Widgets, use this to
+    decide whether to go through requestUpdate() instead, so that the window's
+    preferred frame rate applies to them as well.
+
+    The default implementation returns \c false.
+
+    \since 6.13
+*/
+bool QPlatformWindow::pacesUpdateRequests() const
+{
+    return false;
 }
 
 /*!
@@ -847,6 +910,7 @@ void QPlatformWindow::deliverUpdateRequest()
     }
 
     wp->updateRequestPending = false;
+    d_func()->lastUpdateRequestDelivery.start();
     QEvent request(QEvent::UpdateRequest);
     QCoreApplication::sendEvent(w, &request);
 }
