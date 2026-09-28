@@ -62,7 +62,6 @@ qt_internal_add_plugin(QCocoaIntegrationPlugin
         ${FWAppKit}
         ${FWCarbon}
         ${FWCoreServices}
-        ${FWCoreVideo}
         ${FWIOKit}
         ${FWIOSurface}
         ${FWMetal}

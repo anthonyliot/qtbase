@@ -117,8 +117,10 @@ private slots:
     void requestUpdateRate();
     void requestUpdateMultipleWindows();
     void requestUpdateCreatedButHidden();
+    void requestUpdateForOtherWindowDuringDelivery();
     void requestUpdateAfterHideAndShow();
     void requestUpdateSwapIntervalZero();
+    void requestUpdateDuringNestedEventLoop();
     void activateDeactivateEvent();
     void qobject_castOnDestruction();
     void touchToMouseTranslationByPopup();
@@ -3270,6 +3272,7 @@ protected:
         if (event->type() == QEvent::UpdateRequest) {
             ++updateRequests;
             allOnMainThread &= QThread::isMainThread();
+            lastUpdateRequestInterval = QWindowPrivate::get(this)->updateRequestInterval;
             if (animating)
                 requestUpdate();
         }
@@ -3454,6 +3457,48 @@ void tst_QWindow::requestUpdateCreatedButHidden()
     QTRY_VERIFY(!platformWindow->hasPendingUpdateRequest());
 }
 
+void tst_QWindow::requestUpdateForOtherWindowDuringDelivery()
+{
+    // An update request made for another window while an update request is
+    // being delivered must not get lost, even if that window was already
+    // looked at during the same delivery pass (e.g. one window driving the
+    // frames of another).
+    class Window : public QWindow
+    {
+    public:
+        int updateRequests = 0;
+        QWindow *requestForOnce = nullptr;
+
+    protected:
+        bool event(QEvent *event) override
+        {
+            if (event->type() == QEvent::UpdateRequest) {
+                ++updateRequests;
+                if (auto *other = std::exchange(requestForOnce, nullptr))
+                    other->requestUpdate();
+            }
+            return QWindow::event(event);
+        }
+    };
+
+    // Create the driving window first, so that the other one is newer, which
+    // puts it first in QGuiApplication::allWindows().
+    Window drivingWindow;
+    Window otherWindow;
+    drivingWindow.setGeometry(QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    otherWindow.setGeometry(QRect(m_availableTopLeft + QPoint(120, 120), m_testWindowSize));
+    drivingWindow.show();
+    otherWindow.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&drivingWindow));
+    QVERIFY(QTest::qWaitForWindowExposed(&otherWindow));
+
+    const int otherUpdatesBefore = otherWindow.updateRequests;
+    drivingWindow.requestForOnce = &otherWindow;
+    drivingWindow.requestUpdate();
+    QTRY_COMPARE_WITH_TIMEOUT(drivingWindow.requestForOnce, nullptr, 2s);
+    QTRY_VERIFY_WITH_TIMEOUT(otherWindow.updateRequests > otherUpdatesBefore, 2s);
+}
+
 void tst_QWindow::requestUpdateAfterHideAndShow()
 {
     AnimatingWindow window;
@@ -3484,9 +3529,61 @@ void tst_QWindow::requestUpdateSwapIntervalZero()
     if (QTest::currentTestFailed())
         return;
 
+    window.lastUpdateRequestInterval = -1;
     const double rate = measureUpdateRates({ &window }, 500).first();
     QVERIFY(window.allOnMainThread);
     QVERIFY2(rate > 10, qPrintable(QString::number(rate)));
+
+    // Timer based update requests are not paced, so they don't report an interval
+    if (QGuiApplication::platformName() == "ios"_L1)
+        QSKIP("iOS always paces update requests with the display link");
+    QCOMPARE(window.lastUpdateRequestInterval, 0.0);
+}
+
+void tst_QWindow::requestUpdateDuringNestedEventLoop()
+{
+    // A nested event loop inside update request delivery, e.g. a modal dialog
+    // opened from a paint event, must not stop update requests for the other
+    // windows (the display link can't deliver while its callback runs)
+    if (QGuiApplication::platformName() == "ios"_L1)
+        QSKIP("Nested event loops are not supported in update request delivery on iOS");
+
+    class NestingWindow : public AnimatingWindow
+    {
+    public:
+        bool nestOnce = false;
+        int otherUpdatesDuringNesting = -1;
+        AnimatingWindow *other = nullptr;
+
+    protected:
+        bool event(QEvent *event) override
+        {
+            if (event->type() == QEvent::UpdateRequest && std::exchange(nestOnce, false)) {
+                const int before = other->updateRequests;
+                spinEventLoop(300);
+                otherUpdatesDuringNesting = other->updateRequests - before;
+            }
+            return AnimatingWindow::event(event);
+        }
+    };
+
+    NestingWindow nesting;
+    AnimatingWindow other;
+    nesting.other = &other;
+    showAnimatingWindow(nesting, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    showAnimatingWindow(other, QRect(m_availableTopLeft + QPoint(120, 120), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    other.startAnimating();
+    spinEventLoop(100);
+    nesting.nestOnce = true;
+    nesting.requestUpdate();
+    QTRY_VERIFY_WITH_TIMEOUT(nesting.otherUpdatesDuringNesting >= 0, 3s);
+    other.animating = false;
+    // At least 10 fps while the nested loop ran for 300 ms
+    QVERIFY2(nesting.otherUpdatesDuringNesting >= 3,
+             qPrintable(QString::number(nesting.otherUpdatesDuringNesting)));
 }
 
 void tst_QWindow::activateDeactivateEvent()

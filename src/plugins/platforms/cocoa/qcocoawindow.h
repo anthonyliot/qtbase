@@ -113,6 +113,7 @@ public:
     void requestUpdate() override;
     bool updatesWithDisplayLink() const;
     void deliverUpdateRequest() override;
+    void stopFallbackUpdateTimer();
 
     void requestActivateWindow() override;
 

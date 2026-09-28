@@ -274,8 +274,8 @@ QCocoaWindow::~QCocoaWindow()
 
     // Disposing of the view and window should have resulted in an
     // expose event with isExposed=false, but just in case we try
-    // to stop the display link here as well.
-    static_cast<QCocoaScreen *>(screen())->maybeStopDisplayLink();
+    // to pause the display link here as well.
+    static_cast<QCocoaScreen *>(screen())->maybePauseDisplayLink();
 }
 
 QSurfaceFormat QCocoaWindow::format() const
@@ -1699,9 +1699,9 @@ void QCocoaWindow::windowDidChangeScreen()
         currentScreen->requestUpdate();
     }
     // If there are no exposed windows left on the previous screen
-    // we can stop its display link if it was running.
+    // we can pause its display link if it was running.
     if (previousScreen)
-        previousScreen->maybeStopDisplayLink();
+        previousScreen->maybePauseDisplayLink();
 }
 
 // ----------------------- NSWindowDelegate callbacks -----------------------
@@ -1792,7 +1792,7 @@ void QCocoaWindow::handleExposeEvent(const QRegion &region)
         return;
 
     if (!isExposed())
-        static_cast<QCocoaScreen *>(screen())->maybeStopDisplayLink();
+        static_cast<QCocoaScreen *>(screen())->maybePauseDisplayLink();
 }
 
 // --------------------------------------------------------------------------
@@ -1881,7 +1881,9 @@ void QCocoaWindow::requestUpdate()
         << "using" << (updatesWithDisplayLink() ? "display-link" : "timer");
 
     if (updatesWithDisplayLink()) {
-        if (!static_cast<QCocoaScreen *>(screen())->requestUpdate()) {
+        if (static_cast<QCocoaScreen *>(screen())->requestUpdate()) {
+            stopFallbackUpdateTimer();
+        } else {
             qCDebug(lcQpaDrawing) << "Falling back to timer-based update request";
             QPlatformWindow::requestUpdate();
         }
@@ -1891,10 +1893,22 @@ void QCocoaWindow::requestUpdate()
     }
 }
 
+/*
+    Stops the timer QPlatformWindow::requestUpdate() uses when the display link
+    isn't available. The timer keeps delivering for as long as the window has a
+    pending update request, so once the display link works again it would
+    otherwise keep delivering too, ignoring the window's frame rate preference.
+*/
+void QCocoaWindow::stopFallbackUpdateTimer()
+{
+    QPlatformWindow::d_ptr->updateTimer.stop();
+}
+
 bool QCocoaWindow::updatesWithDisplayLink() const
 {
-    // Update via CVDisplayLink if Vsync is enabled
-    return format().swapInterval() != 0;
+    // Update via the display link if Vsync is enabled. Not using format(),
+    // as that also parses the view's color space, for every update request.
+    return window()->requestedFormat().swapInterval() != 0;
 }
 
 void QCocoaWindow::deliverUpdateRequest()

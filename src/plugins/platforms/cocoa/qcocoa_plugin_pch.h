@@ -7,7 +7,6 @@
 
 #include <Carbon/Carbon.h>
 #include <CoreGraphics/CoreGraphics.h>
-#include <CoreVideo/CoreVideo.h>
 #include <IOKit/graphics/IOGraphicsLib.h>
 #include <IOSurface/IOSurface.h>
 #include <QuartzCore/QuartzCore.h>
