@@ -1307,12 +1307,23 @@ qreal QWindow::opacity() const
     requests the window makes with requestUpdate(), including those made by
     QPaintDeviceWindow::update() and Qt Quick. Each window is paced on its own,
     so windows on the same screen can prefer different rates, and one window's
-    preference doesn't slow down another window. Qt Quick advances animations
-    by the actual interval between frames, so they run at the same speed at any
-    rate.
+    preference doesn't slow down another window. When windows on the same
+    screen prefer rates that the display can't show together at a lower
+    refresh rate, such as 24 and 30 on a 120 Hz display, the display keeps
+    refreshing at its full rate.
+
+    Qt Quick advances animations by the interval between the window's frames,
+    so that they run at the same speed at any rate. Animator types, which run
+    on the render thread, can run slower for about a tenth of a second when
+    they start on displays that switch to a lower refresh rate for the
+    preferred rate, such as ProMotion displays. With more than one visible Qt
+    Quick window, animations are advanced by a timer at the display's refresh
+    rate, while rendering is still paced.
 
     The default value, 0, means no preference: update requests are delivered at
-    the platform's default rate, usually the refresh rate of the display.
+    the platform's default rate, which is the refresh rate of the display on
+    macOS and iOS, and every few milliseconds on platforms that deliver update
+    requests with a timer.
     Setting a negative or non-finite value prints a warning and sets the
     property to 0.
 
