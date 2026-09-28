@@ -52,7 +52,33 @@ Full diffs: `git -C qtbase diff 25d8223e59f..wip/cadisplaylink -- . ':!wip-cadis
 * **Nested event loops** in delivery (modal dialog from a paint event) on macOS: a watchdog timer
   switches the screen's windows to timer based update requests until the loop returns.
 
-## Commits and their documents
+## The Gerrit series (review round 2 on)
+
+What goes to Gerrit, rebuilt from the final tree as logical changes (review round 1, R1-7), in
+worktrees under `~/Desktop/bitbucket/qt5-series/`, branches `wip/cadisplaylink-gerrit`. Its tree
+is identical to `wip/cadisplaylink` without `wip-cadisplaylink/`. Built and tested commit by commit,
+see [TESTING.md](TESTING.md). Documents: [series/](series/).
+
+| # | qtbase commit | Contains (old commits) |
+|---|---|---|
+| [G1](series/G1-tests-delivery.md) | tst_QWindow: Test the rate and delivery of update requests | 07, 19 (baseline part) |
+| [G2](series/G2-cadisplaylink.md) | cocoa: Replace CVDisplayLink with CADisplayLink for update requests | 03, 09 (private interval), 10 (cocoa part), 16, 17, 18, 20, 28, 29; R1-1, R1-4, R1-5, R2-1 |
+| [G3](series/G3-doc.md) | Doc: Refer to CADisplayLink instead of CVDisplayLink | 05 |
+| [G4](series/G4-qwindow-api.md) | Add QWindow::preferredFrameRate | 22 (generic parts); R1-6 |
+| [G5a](series/G5a-framerate-model.md) | Add a shared model of display link frame rates for Apple platforms | 02, 09 (helper part), 15, 23 (helper part), 30; R1-1, R1-2, R1-3, R1-11, R1-12 |
+| [G5b](series/G5b-ios.md) | ios: Pace update requests to the windows' preferred frame rates | 06, 10, 16, 18, 23 (iOS parts); R1-9, m9 |
+| [G5c](series/G5c-cocoa.md) | cocoa: Pace update requests to the windows' preferred frame rates | 04, 10, 23, 25 (cocoa parts), the Apple parts of the property doc |
+| [G6](series/G6-widgets.md) | Widgets: Pace top-level updates when the window has a preferred rate | 24, 32; R1-8, R1-13; the Widgets part of the property doc |
+| [G7](series/G7-manual-test.md) | Add a manual test for update request pacing and frame rates | 08, 11, 14, 26 |
+
+| # | qtdeclarative commit | Contains (old commits) |
+|---|---|---|
+| [D1](series/D1-animation-interval.md) | Advance vsync based animations by the window's frame interval | 01-04, 06, the Animator test fixes |
+| [D2](series/D2-qml-doc-tests.md) | Document Window.preferredFrameRate, and test it from QML | 05, R1-6/R1-10 fixes |
+
+## Commits of the working branches and their documents
+
+The working branches keep the history that led to the series; the documents below describe it.
 
 `Plan` is what should happen to the commit when it goes to Gerrit (see "Upstreaming" below).
 
@@ -122,6 +148,16 @@ squashes the fixups and drops every `WIP:` commit (the `wip-cadisplaylink/` dire
 The copyright headers say "The Qt Company Ltd."; the contribution's copyright holder still has to
 be decided before upstreaming.
 
+## Before sending to Gerrit
+
+* **Stall A/B on the 120 Hz ProMotion panel** (condition of review R1-1): run the manual test
+  with `QT_APPLE_PREFERRED_FRAME_RATE_RANGE=120` and `=1,120` (and the default and `--rate 30`),
+  many short launches, on this branch and on the CVDisplayLink baseline plugin, and record the
+  stall counts in TESTING.md. With the round 1 changes, these ranges are sent as the default range.
+* Sign and create the series commits (blocked on AppleConnect), check each commit's tree against
+  `/tmp/r2/series-trees.txt` and `/tmp/r2/decl-trees.txt`, and have the reviewer check them.
+* Decide the copyright holder of the new files.
+
 ## Building and testing
 
 Builds used (paths relative to `~/Desktop/bitbucket`):
@@ -152,6 +188,17 @@ Test results: [TESTING.md](TESTING.md).
 
 ## Known limitations (documented, not fixed)
 
+* **Display link stall (review R1-1)**: on the 120 Hz ProMotion panel the display link was seen a
+  few times to stop calling back while a window had a pending update request, with explicit
+  private ranges for the maximum rate ((120,120,120), (1,120,0)). Not root-caused, and no
+  CVDisplayLink A/B yet (the panel wasn't available for round 1). Mitigated: such ranges are sent as
+  the default range, and a watchdog recreates a display link that hasn't called back for ten frames
+  (at least 1 s) while update requests are pending (verified with a simulated stall).
+* **qtmultimedia** still uses CVDisplayLink on macOS 14.x
+  (`src/plugins/multimedia/darwin/mediaplayer/avfdisplaylink.mm`, CADisplayLink only
+  `@available(macOS 15.0)`), though NSScreen/NSView display links exist from macOS 14.0. Follow-up
+  outside this PR (review R1-10).
+
 See `../REVIEW-API.md` for the reasoning; in short:
 
 * Mixing the private property / env var ranges with public-API windows can pace below a
@@ -161,7 +208,5 @@ See `../REVIEW-API.md` for the reasoning; in short:
   drops to the preferred rate, so Animators run slow for ~100 ms until it switches to timer mode.
 * QQuickWidget: only the composition is paced, its scene renders from its own timer.
 * iOS: nested event loops in delivery are not handled (re-entrant delivery).
-* Delivery iterates raw `QWindow *` from `QGuiApplication::allWindows()`, as before this change; a
-  delivery that deletes *another* window on the same screen is not guarded against.
 * The live-resize event tap workaround is kept but not re-validated with CADisplayLink.
 * No public frame timing (target presentation time) yet; video apps should pick frames by time.
