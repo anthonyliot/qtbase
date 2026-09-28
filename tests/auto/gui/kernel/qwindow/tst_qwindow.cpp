@@ -3309,7 +3309,8 @@ static void spinEventLoop(int ms)
 
 // Measures the update request rate of the given windows, in updates per second.
 // A loaded machine can miss frames, so if a window got less than half of the
-// frames the display link paced it at, measure again, up to three times.
+// frames the display link paced it at (or, if the display link doesn't report
+// that, of half the refresh rate), measure again, up to three times.
 static QList<double> measureUpdateRates(const QList<AnimatingWindow *> &windows,
                                         int durationMs = kMeasureMs)
 {
@@ -3332,7 +3333,10 @@ static QList<double> measureUpdateRates(const QList<AnimatingWindow *> &windows,
         for (auto *window : windows) {
             const double rate = window->updateRequests / elapsed;
             rates.append(rate);
-            if (window->lastUpdateRequestInterval > 0 && rate < 0.5 / window->lastUpdateRequestInterval)
+            const double expectedRate = window->lastUpdateRequestInterval > 0
+                    ? 1 / window->lastUpdateRequestInterval
+                    : window->screen()->refreshRate() / 2;
+            if (rate < 0.5 * expectedRate)
                 missedFrames = true;
         }
         if (!missedFrames)
@@ -3391,13 +3395,15 @@ static int framesForPreferredRate(double refreshRate, double preferred)
     return n;
 }
 
-// When a single window determines the display link's rate, the system picks it,
-// and may snap to the next faster rate it supports instead.
+// A range of rates, in frames per second
 struct RateBounds
 {
     double slowest;
     double fastest;
 };
+
+// When a single window determines the display link's rate, the system picks it,
+// and may snap to the next faster rate it supports instead.
 static RateBounds systemPacedRates(double refreshRate, double requestedRate)
 {
     const double rate = qtPacedRate(refreshRate, requestedRate);
@@ -3417,6 +3423,18 @@ static double unthrottledRate(const AnimatingWindow &window)
     if (window.lastUpdateRequestInterval > 0)
         return 1.0 / window.lastUpdateRequestInterval;
     return window.screen()->refreshRate();
+}
+
+// The rates a window without a preference may get: the rate the display link
+// reports, or if it doesn't report one, between half the refresh rate and the
+// refresh rate, as the system may run the display link slower without telling
+// (e.g. in Low Power Mode).
+static RateBounds unthrottledRates(const AnimatingWindow &window)
+{
+    if (window.lastUpdateRequestInterval > 0)
+        return { 1.0 / window.lastUpdateRequestInterval, 1.0 / window.lastUpdateRequestInterval };
+    const double refreshRate = window.screen()->refreshRate();
+    return { refreshRate / 2, refreshRate };
 }
 
 static void showAnimatingWindow(AnimatingWindow &window, const QRect &geometry)
@@ -3469,7 +3487,7 @@ void tst_QWindow::requestUpdateRate()
                      << "display link rate" << unthrottledRate(window);
 
     QVERIFY(window.allOnMainThread);
-    QCOMPARE_RATE(rate, unthrottledRate(window));
+    QCOMPARE_RATE_IN(rate, unthrottledRates(window));
 }
 
 void tst_QWindow::requestUpdateMultipleWindows()
@@ -3486,8 +3504,8 @@ void tst_QWindow::requestUpdateMultipleWindows()
         QSKIP("Windows ended up on different screens");
 
     const auto rates = measureUpdateRates({ &window1, &window2 });
-    QCOMPARE_RATE(rates.at(0), unthrottledRate(window1));
-    QCOMPARE_RATE(rates.at(1), unthrottledRate(window2));
+    QCOMPARE_RATE_IN(rates.at(0), unthrottledRates(window1));
+    QCOMPARE_RATE_IN(rates.at(1), unthrottledRates(window2));
 }
 
 void tst_QWindow::requestUpdateCreatedButHidden()

@@ -1096,7 +1096,6 @@ void tst_QWidgetRepaintManager::moveInOutOverlapped()
 
 namespace {
 
-// A widget that keeps scheduling updates, like an animated view
 // The interval the window's update requests are paced at, during delivery
 double updateRequestInterval(const QWidget *widget)
 {
@@ -1104,6 +1103,7 @@ double updateRequestInterval(const QWidget *widget)
     return window ? QWindowPrivate::get(const_cast<QWindow *>(window))->updateRequestInterval : 0;
 }
 
+// A widget that keeps scheduling updates, like an animated view
 class AnimatingWidget : public QWidget
 {
 public:
