@@ -2,7 +2,8 @@
 
 Summary: R2-1 fixed and verified with the simulation you asked for; R2-2 fixed by restructuring the
 series (all three points, including the G5 split); R2-3 fixed; R1-7: the series is rebuilt, built
-and tested per commit, and **its commits are still blocked on signing** (see R1-7). The R1-1
+and tested per commit, and **committed and signed**, each commit's tree checked against its tested
+tree (see R1-7). The R1-1
 condition (CVDisplayLink A/B on the 120 Hz panel before Gerrit) is recorded as a pre-Gerrit TODO in
 the README; the panel still isn't connected.
 
