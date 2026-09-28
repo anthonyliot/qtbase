@@ -19,6 +19,7 @@
 
 #include <QtGui/private/qwindow_p.h>
 #include <QtGui/private/qhighdpiscaling_p.h>
+#include <QtGui/private/qappleframerate_p.h>
 
 #include <QtCore/private/qcore_mac_p.h>
 #include <QtCore/private/qeventdispatcher_cf_p.h>
@@ -378,6 +379,12 @@ bool QCocoaScreen::requestUpdate()
         Q_UNUSED(eventTap);
     }
 
+    // Make sure the display link runs fast enough for the window that
+    // requested the update. During delivery this happens once all the
+    // windows have been processed instead.
+    if (!m_deliveringUpdateRequests)
+        updateDisplayLinkFrameRate();
+
     if (m_displayLink.paused) {
         qCDebug(lcQpaScreenUpdates) << "Resuming display link for" << this;
         m_displayLink.paused = NO;
@@ -401,15 +408,39 @@ bool QCocoaScreen::requestUpdate()
     return true;
 }
 
-// The platform window of a window on this screen that gets its update
-// requests from the display link, or nullptr
-QCocoaWindow *QCocoaScreen::displayLinkWindow(const QWindow *window) const
+namespace {
+// The windows on a QCocoaScreen that get their update requests from its display link
+class CocoaDisplayLinkScreen : public QAppleDisplayLinkDelivery::Screen
 {
-    if (window->screen() != screen())
-        return nullptr;
-    auto *platformWindow = static_cast<QCocoaWindow *>(window->handle());
-    return platformWindow && platformWindow->updatesWithDisplayLink() ? platformWindow : nullptr;
-}
+public:
+    explicit CocoaDisplayLinkScreen(const QCocoaScreen *screen) : m_screen(screen) { }
+
+    bool updatesWithDisplayLink(const QWindow *window) const override
+    {
+        if (window->screen() != m_screen->screen())
+            return false;
+        auto *platformWindow = static_cast<QCocoaWindow *>(window->handle());
+        return platformWindow && platformWindow->updatesWithDisplayLink();
+    }
+
+    QAppleFrameRatePreference &frameRatePreference(const QWindow *window) override
+    {
+        return static_cast<QCocoaWindow *>(window->handle())->frameRatePreference();
+    }
+
+    bool deliverUpdateRequest(QWindow *window) override
+    {
+        auto *platformWindow = static_cast<QCocoaWindow *>(window->handle());
+        // The display link may have been restarted without going through
+        // QCocoaWindow::requestUpdate(), e.g. after a screen change.
+        platformWindow->stopFallbackUpdateTimer();
+        return platformWindow->tryDeliverUpdateRequest();
+    }
+
+private:
+    const QCocoaScreen *m_screen;
+};
+} // namespace
 
 void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInterval)
 {
@@ -451,46 +482,14 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
     qCDebug(lcQpaScreenUpdates) << "Display link callback for" << this << "targeting"
                                 << targetTimestamp << "with frame interval" << frameInterval;
 
-    // Delivering to a window may destroy other windows
-    QVarLengthArray<QPointer<QWindow>, 16> windows;
-    for (QWindow *window : QGuiApplication::allWindows()) {
-        if (displayLinkWindow(window))
-            windows.append(window);
-    }
+    CocoaDisplayLinkScreen displayLinkScreen(this);
+    const auto frameRateRange = QAppleDisplayLinkDelivery::deliver(
+            displayLinkScreen, { targetTimestamp, frameInterval, refreshRate() });
 
-    const auto deliverUpdateRequest = [this, frameInterval](QWindow *window) {
-        QCocoaWindow *platformWindow = displayLinkWindow(window);
-        if (!platformWindow || !platformWindow->hasPendingUpdateRequest())
-            return false;
-        // The display link may have been restarted without going through
-        // QCocoaWindow::requestUpdate(), e.g. after a screen change.
-        platformWindow->stopFallbackUpdateTimer();
-        const QPointer<QWindow> guard(window);
-        qt_window_private(window)->updateRequestInterval = frameInterval;
-        platformWindow->deliverUpdateRequest();
-        // Only valid during delivery, so that frames driven by other means,
-        // such as expose events, don't use it
-        if (guard)
-            qt_window_private(guard)->updateRequestInterval = 0;
-        return true;
-    };
+    if (frameRateRange && m_displayLink)
+        setDisplayLinkFrameRate(*frameRateRange);
 
-    QVarLengthArray<bool, 16> delivered(windows.size());
-    std::fill(delivered.begin(), delivered.end(), false);
-    for (qsizetype i = 0; i < windows.size(); ++i) {
-        if (QWindow *window = windows.at(i))
-            delivered[i] = deliverUpdateRequest(window);
-    }
-
-    // Windows that got an update request while delivering to a window after
-    // them, e.g. when one window drives the frames of another. Their request
-    // won't reach us again, as it's already pending.
-    for (qsizetype i = 0; i < windows.size(); ++i) {
-        if (QWindow *window = windows.at(i); window && !delivered.at(i))
-            deliverUpdateRequest(window);
-    }
-
-    if (!hasPendingDisplayLinkUpdateRequests() && m_displayLink) {
+    if (!frameRateRange && m_displayLink) {
         // Unlike a CVDisplayLink there's no thread to stop and start, so
         // pausing and resuming is cheap, and avoids waking up the main
         // thread for every display refresh when nothing is animating.
@@ -538,7 +537,8 @@ void QCocoaScreen::displayLinkWatchdogTimeout()
 
     if (!m_displayLink || m_displayLink.paused)
         return;
-    if (!hasPendingDisplayLinkUpdateRequests())
+    CocoaDisplayLinkScreen displayLinkScreen(this);
+    if (!QAppleDisplayLinkDelivery::pendingRange(displayLinkScreen, refreshRate()))
         return;
 
     // Display links don't call back while the display sleeps
@@ -604,17 +604,35 @@ bool QCocoaScreen::hasPendingUpdateRequests() const
     return false;
 }
 
-// Whether any window on this screen has a pending update request for the display link
-bool QCocoaScreen::hasPendingDisplayLinkUpdateRequests() const
+// Updates the display link's frame rate range from the windows that have pending
+// update requests, and returns whether there are any.
+bool QCocoaScreen::updateDisplayLinkFrameRate()
 {
-    const auto windows = QGuiApplication::allWindows();
-    for (auto *window : windows) {
-        if (auto *platformWindow = displayLinkWindow(window);
-            platformWindow && platformWindow->hasPendingUpdateRequest()) {
-            return true;
-        }
+    CocoaDisplayLinkScreen displayLinkScreen(this);
+    const auto frameRateRange = QAppleDisplayLinkDelivery::pendingRange(displayLinkScreen, refreshRate());
+    if (frameRateRange && m_displayLink)
+        setDisplayLinkFrameRate(*frameRateRange);
+    return frameRateRange.has_value();
+}
+
+void QCocoaScreen::setDisplayLinkFrameRate(const QAppleFrameRateRange &range)
+{
+    Q_ASSERT(m_displayLink);
+
+    // CoreAnimation throws for invalid ranges. QAppleFrameRateRange
+    // never produces those, but let's be defensive about it.
+    if (!range.isValid()) {
+        qCWarning(lcQpaScreenUpdates) << "Refusing to set invalid" << range << "on display link";
+        return;
     }
-    return false;
+
+    const CAFrameRateRange current = m_displayLink.preferredFrameRateRange;
+    if (QAppleFrameRateRange(current.minimum, current.maximum, current.preferred) == range)
+        return;
+
+    qCDebug(lcQpaScreenUpdates) << "Setting display link frame rate for" << this << "to" << range;
+    m_displayLink.preferredFrameRateRange =
+            CAFrameRateRangeMake(range.minimum, range.maximum, range.preferred);
 }
 
 void QCocoaScreen::maybePauseDisplayLink()

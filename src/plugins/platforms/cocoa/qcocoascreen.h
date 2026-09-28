@@ -23,8 +23,8 @@ Q_FORWARD_DECLARE_OBJC_CLASS(CADisplayLink);
 QT_BEGIN_NAMESPACE
 
 class QCocoaIntegration;
-class QCocoaWindow;
 class QTimer;
+struct QAppleFrameRateRange;
 
 class QCocoaScreen : public QPlatformScreen, public QNativeInterface::QCocoaScreen
 {
@@ -113,10 +113,10 @@ private:
     void displayLinkWatchdogTimeout();
     void fallBackToTimerBasedUpdateRequests();
 
-    QCocoaWindow *displayLinkWindow(const QWindow *window) const;
     bool hasPendingUpdateRequests() const;
-    bool hasPendingDisplayLinkUpdateRequests() const;
     void maybePauseDisplayLink();
+    bool updateDisplayLinkFrameRate();
+    void setDisplayLinkFrameRate(const QAppleFrameRateRange &range);
     void invalidateDisplayLink();
 
     friend class QCocoaIntegration;
