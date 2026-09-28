@@ -397,6 +397,14 @@ bool QCocoaScreen::requestUpdate()
         startDisplayLinkWatchdog(displayLinkStallTimeout());
     }
 
+    // While the display link doesn't deliver, let the window fall back to a
+    // timer. The display link keeps running, and takes over once it delivers.
+    if (m_displayLinkStalled) {
+        qCDebug(lcQpaScreenUpdates) << "Display link for" << this << "doesn't deliver"
+                                    << "- not using it";
+        return false;
+    }
+
     return true;
 }
 
@@ -451,8 +459,10 @@ void QCocoaScreen::deliverUpdateRequests(double targetTimestamp, double frameInt
     }
     QScopedValueRollback recursionGuard(m_deliveringUpdateRequests, true);
 
-    // The display link delivers, so reset the watchdog's back-off
+    // The display link delivers, so reset the watchdog's back-off, and use it
+    // again if it had stalled
     m_displayLinkRecoveries = 0;
+    m_displayLinkStalled = false;
 
     // If delivering an update request spins a nested event loop (e.g. a modal
     // dialog opened from a paint event), the display link can't deliver to any
@@ -501,8 +511,8 @@ void QCocoaScreen::startDisplayLinkWatchdog(std::chrono::milliseconds timeout)
 }
 
 // Ten frames at the slowest rate the display link may run at, and at least a
-// second, doubling with every recovery in a row
-std::chrono::milliseconds QCocoaScreen::displayLinkStallTimeout() const
+// second, doubling with every recovery in a row, up to eight times as long
+std::chrono::milliseconds QCocoaScreen::displayLinkStallTimeout(bool maximumBackOff) const
 {
     double frameInterval = refreshRate() > 0 ? 1 / refreshRate() : 1.0 / 60;
     if (m_displayLink) {
@@ -510,7 +520,7 @@ std::chrono::milliseconds QCocoaScreen::displayLinkStallTimeout() const
         if (range.minimum > 0)
             frameInterval = std::max(frameInterval, 1.0 / range.minimum);
     }
-    const double backOff = 1 << std::min(m_displayLinkRecoveries, 3);
+    const double backOff = 1 << (maximumBackOff ? 3 : std::min(m_displayLinkRecoveries, 3));
     return std::chrono::milliseconds(qint64(std::max(1.0, 10 * frameInterval) * backOff * 1000));
 }
 
@@ -533,18 +543,24 @@ void QCocoaScreen::displayLinkWatchdogTimeout()
 
     // Display links don't call back while the display sleeps
     if (CGDisplayIsAsleep(m_displayId)) {
-        startDisplayLinkWatchdog(displayLinkStallTimeout());
+        startDisplayLinkWatchdog(displayLinkStallTimeout(true));
         return;
     }
 
     // The display link has update requests to deliver, but hasn't called back
     // for a while. That was seen a few times on a ProMotion display, without
-    // being understood. A new display link delivers again.
+    // being understood. Recreate it, as a new display link may deliver again.
+    // If the new one doesn't either, the windows fall back to timer based
+    // update requests until one does, see requestUpdate().
     if (m_displayLinkRecoveries++ == 0) {
         qCWarning(lcQpaScreenUpdates) << "Display link for" << this
                                       << "stopped delivering update requests. Recreating it";
     } else {
-        qCDebug(lcQpaScreenUpdates) << "Recreating display link for" << this << "again";
+        if (!m_displayLinkStalled) {
+            qCWarning(lcQpaScreenUpdates) << "Display link for" << this << "still doesn't deliver."
+                                          << "Falling back to timer based update requests";
+        }
+        m_displayLinkStalled = true;
     }
     invalidateDisplayLink();
     if (!requestUpdate())
