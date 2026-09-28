@@ -3307,7 +3307,9 @@ static void spinEventLoop(int ms)
     loop.exec();
 }
 
-// Measures the update request rate of the given windows, in updates per second
+// Measures the update request rate of the given windows, in updates per second.
+// A loaded machine can miss frames, so if a window got less than half of the
+// frames the display link paced it at, measure again, up to three times.
 static QList<double> measureUpdateRates(const QList<AnimatingWindow *> &windows,
                                         int durationMs = kMeasureMs)
 {
@@ -3316,18 +3318,30 @@ static QList<double> measureUpdateRates(const QList<AnimatingWindow *> &windows,
         window->startAnimating();
     spinEventLoop(200);
 
-    QElapsedTimer timer;
-    for (auto *window : windows)
-        window->updateRequests = 0;
-    timer.start();
-    spinEventLoop(durationMs);
-    const double elapsed = timer.nsecsElapsed() / 1e9;
-
     QList<double> rates;
-    for (auto *window : windows) {
-        rates.append(window->updateRequests / elapsed);
-        window->animating = false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        QElapsedTimer timer;
+        for (auto *window : windows)
+            window->updateRequests = 0;
+        timer.start();
+        spinEventLoop(durationMs);
+        const double elapsed = timer.nsecsElapsed() / 1e9;
+
+        rates.clear();
+        bool missedFrames = false;
+        for (auto *window : windows) {
+            const double rate = window->updateRequests / elapsed;
+            rates.append(rate);
+            if (window->lastUpdateRequestInterval > 0 && rate < 0.5 / window->lastUpdateRequestInterval)
+                missedFrames = true;
+        }
+        if (!missedFrames)
+            break;
+        qCDebug(lcTests) << "Missed frames, measuring again:" << rates;
     }
+
+    for (auto *window : windows)
+        window->animating = false;
     // Drain the last requests
     spinEventLoop(50);
     return rates;
@@ -3413,18 +3427,32 @@ static void showAnimatingWindow(AnimatingWindow &window, const QRect &geometry)
     QVERIFY(QTest::qWaitForWindowExposed(&window));
 }
 
-// A rate is "close" when within 20% below, allowing for missed frames on
-// loaded machines, and within 10% above, as we should never overshoot.
+// A rate is "close" when within 40% below, allowing for missed frames on
+// loaded machines, and within 10% above, as we should never overshoot. That
+// can't tell adjacent exact rates apart (e.g. 24 and 30): QCOMPARE_PACING does.
 #define QCOMPARE_RATE_BETWEEN(actual, slowest, fastest)                                     \
     do {                                                                                    \
         const double a = actual;                                                            \
         const double lo = slowest;                                                          \
         const double hi = fastest;                                                          \
-        if (a < lo * 0.8 || a > hi * 1.1)                                                   \
+        if (a < lo * 0.6 || a > hi * 1.1)                                                   \
             QFAIL(qPrintable(u"Rate %1/s is not within %2/s and %3/s"_s.arg(a).arg(lo).arg(hi))); \
     } while (false)
 #define QCOMPARE_RATE(actual, expected) QCOMPARE_RATE_BETWEEN(actual, expected, expected)
 #define QCOMPARE_RATE_IN(actual, bounds) QCOMPARE_RATE_BETWEEN(actual, (bounds).slowest, (bounds).fastest)
+
+// The rate the display link paced the window at during its last update request,
+// which doesn't depend on missed frames, is within 1% of the bounds
+#define QCOMPARE_PACING_BETWEEN(window, slowest, fastest)                                   \
+    do {                                                                                    \
+        const double interval = (window).lastUpdateRequestInterval;                         \
+        const double lo = slowest;                                                          \
+        const double hi = fastest;                                                          \
+        if (!(interval > 0) || 1 / interval < lo * 0.99 || 1 / interval > hi * 1.01)        \
+            QFAIL(qPrintable(u"Paced at %1/s, not within %2/s and %3/s"_s.arg(1 / interval).arg(lo).arg(hi))); \
+    } while (false)
+#define QCOMPARE_PACING(window, expected) QCOMPARE_PACING_BETWEEN(window, expected, expected)
+#define QCOMPARE_PACING_IN(window, bounds) QCOMPARE_PACING_BETWEEN(window, (bounds).slowest, (bounds).fastest)
 
 void tst_QWindow::requestUpdateRate()
 {
@@ -3598,10 +3626,12 @@ void tst_QWindow::preferredFrameRate()
     const double rate = measureUpdateRates({ &window }).first();
     qCDebug(lcTests) << "Update rate" << rate << "for" << preference << "at refresh rate"
                      << refreshRate;
-    if (expectedRate == 0)
+    if (expectedRate == 0) {
         QCOMPARE_RATE(rate, unthrottledRate(window));
-    else
+    } else {
         QCOMPARE_RATE_IN(rate, systemPacedRates(refreshRate, expectedRate));
+        QCOMPARE_PACING_IN(window, systemPacedRates(refreshRate, expectedRate));
+    }
 }
 
 void tst_QWindow::preferredFrameRateMixedWindows()
@@ -3627,11 +3657,13 @@ void tst_QWindow::preferredFrameRateMixedWindows()
     auto rates = measureUpdateRates({ &slowWindow, &fastWindow });
     const double linkRate = unthrottledRate(fastWindow);
     QCOMPARE_RATE(rates.at(0), qtPacedRate(linkRate, 30));
+    QCOMPARE_PACING(slowWindow, qtPacedRate(linkRate, 30));
     QCOMPARE_RATE(rates.at(1), linkRate);
 
     // Once the fast window stops, the slow window keeps its rate
     rates = measureUpdateRates({ &slowWindow });
     QCOMPARE_RATE_IN(rates.at(0), systemPacedRates(refreshRate, 30));
+    QCOMPARE_PACING_IN(slowWindow, systemPacedRates(refreshRate, 30));
 }
 
 void tst_QWindow::preferredFrameRateRuntimeChange()
@@ -3651,12 +3683,14 @@ void tst_QWindow::preferredFrameRateRuntimeChange()
 
     window.setProperty("_q_preferredFrameRateRange", 30);
     QCOMPARE_RATE_IN(measureUpdateRates({ &window }).first(), systemPacedRates(refreshRate, 30));
+    QCOMPARE_PACING_IN(window, systemPacedRates(refreshRate, 30));
 
     // Change while animating
     window.startAnimating();
     spinEventLoop(100);
     window.setProperty("_q_preferredFrameRateRange", 24);
     QCOMPARE_RATE_IN(measureUpdateRates({ &window }).first(), systemPacedRates(refreshRate, 24));
+    QCOMPARE_PACING_IN(window, systemPacedRates(refreshRate, 24));
 
     window.setProperty("_q_preferredFrameRateRange", QVariant());
     QCOMPARE_RATE(measureUpdateRates({ &window }).first(), unthrottledRate(window));
@@ -3830,6 +3864,8 @@ void tst_QWindow::preferredFrameRateApiVideoAndUi()
     const auto rates = measureUpdateRates({ &video, &ui });
     QCOMPARE_RATE(rates.at(0), 24.0);
     QCOMPARE_RATE(rates.at(1), 60.0);
+    QCOMPARE_PACING(video, 24.0);
+    QCOMPARE_PACING(ui, 60.0);
 }
 
 // Platforms whose update requests are timer based (QPlatformWindow's default
@@ -3976,6 +4012,7 @@ void tst_QWindow::preferredFrameRatePerScreen()
     first.setPreferredFrameRate(first.screen()->refreshRate() / 4);
     rates = measureUpdateRates({ &first, &second });
     QCOMPARE_RATE(rates.at(0), first.screen()->refreshRate() / 4);
+    QCOMPARE_PACING(first, first.screen()->refreshRate() / 4);
     QCOMPARE_RATE(rates.at(1), secondRate);
 
     // Moving a window, while it animates, moves its update requests to the
@@ -3992,6 +4029,7 @@ void tst_QWindow::preferredFrameRatePerScreen()
     if (screens.at(1)->refreshRate() >= 30) {
         const int n = framesForPreferredRate(screens.at(1)->refreshRate(), 30);
         QCOMPARE_RATE(rates.at(0), screens.at(1)->refreshRate() / n);
+        QCOMPARE_PACING(first, screens.at(1)->refreshRate() / n);
     }
 }
 
