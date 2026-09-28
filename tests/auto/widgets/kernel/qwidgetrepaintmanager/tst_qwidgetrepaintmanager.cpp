@@ -1209,7 +1209,12 @@ void tst_QWidgetRepaintManager::pacedUpdates()
 
     // Back to the previous behavior without a preference
     topLevel.windowHandle()->resetPreferredFrameRate();
-    QVERIFY2(measure() > 30 * 1.5, "not unpaced after resetting the preference");
+    const double resetRate = measure();
+    if (!topLevel.windowHandle()->isExposed())
+        QSKIP("The window got covered by another window during the test");
+    QVERIFY2(resetRate > 30 * 1.5,
+             qPrintable(QStringLiteral("%1 frames per second after resetting the preference "
+                                       "(%2 before setting it)").arg(resetRate).arg(unpacedRate)));
 
     if (rhiChild)
         rhiChild->animating = false;
