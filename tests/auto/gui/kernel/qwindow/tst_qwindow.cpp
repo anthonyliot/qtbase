@@ -15,12 +15,22 @@
 #include <QSignalSpy>
 #include <QEvent>
 #include <QStyleHints>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QTimer>
+#include <QThread>
+
+#include <algorithm>
+#include <cmath>
 
 #if defined(Q_OS_QNX)
 #include <QOpenGLContext>
 #elif defined(Q_OS_WIN)
 #  include <QtCore/qt_windows.h>
 #endif
+
+using namespace Qt::StringLiterals;
+using namespace std::chrono_literals;
 
 Q_LOGGING_CATEGORY(lcTests, "qt.gui.tests")
 
@@ -104,6 +114,11 @@ private slots:
     void testBlockingWindowShownAfterModalDialog();
     void generatedMouseMove();
     void keepPendingUpdateRequests();
+    void requestUpdateRate();
+    void requestUpdateMultipleWindows();
+    void requestUpdateCreatedButHidden();
+    void requestUpdateAfterHideAndShow();
+    void requestUpdateSwapIntervalZero();
     void activateDeactivateEvent();
     void qobject_castOnDestruction();
     void touchToMouseTranslationByPopup();
@@ -3229,6 +3244,249 @@ void tst_QWindow::keepPendingUpdateRequests()
 
     QVERIFY(platformWindow->hasPendingUpdateRequest());
     QTRY_VERIFY(!platformWindow->hasPendingUpdateRequest());
+}
+
+// Window that keeps requesting updates while animating, like a render loop would
+class AnimatingWindow : public QWindow
+{
+public:
+    explicit AnimatingWindow(QScreen *screen = nullptr) : QWindow(screen) { }
+
+    int updateRequests = 0;
+    bool allOnMainThread = true;
+    bool animating = false;
+    double lastUpdateRequestInterval = 0;
+
+    void startAnimating()
+    {
+        updateRequests = 0;
+        animating = true;
+        requestUpdate();
+    }
+
+protected:
+    bool event(QEvent *event) override
+    {
+        if (event->type() == QEvent::UpdateRequest) {
+            ++updateRequests;
+            allOnMainThread &= QThread::isMainThread();
+            if (animating)
+                requestUpdate();
+        }
+        return QWindow::event(event);
+    }
+};
+
+static constexpr int kMeasureMs = 500;
+
+// Unlike QTest::qWait, which sleeps between processing events, this runs a
+// real event loop, so that update requests can be delivered at full rate.
+static void spinEventLoop(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, Qt::PreciseTimer, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+// Measures the update request rate of the given windows, in updates per second.
+// A loaded machine can miss frames, so if a window got less than half of the
+// frames the display link paced it at (or, if the display link doesn't report
+// that, of half the refresh rate), measure again, up to three times.
+static QList<double> measureUpdateRates(const QList<AnimatingWindow *> &windows,
+                                        int durationMs = kMeasureMs)
+{
+    // Let things settle, e.g. the display link picking up a new frame rate
+    for (auto *window : windows)
+        window->startAnimating();
+    spinEventLoop(200);
+
+    QList<double> rates;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        QElapsedTimer timer;
+        for (auto *window : windows)
+            window->updateRequests = 0;
+        timer.start();
+        spinEventLoop(durationMs);
+        const double elapsed = timer.nsecsElapsed() / 1e9;
+
+        rates.clear();
+        bool missedFrames = false;
+        for (auto *window : windows) {
+            const double rate = window->updateRequests / elapsed;
+            rates.append(rate);
+            const double expectedRate = window->lastUpdateRequestInterval > 0
+                    ? 1 / window->lastUpdateRequestInterval
+                    : window->screen()->refreshRate() / 2;
+            if (rate < 0.5 * expectedRate)
+                missedFrames = true;
+        }
+        if (!missedFrames)
+            break;
+        qCDebug(lcTests) << "Missed frames, measuring again:" << rates;
+    }
+
+    for (auto *window : windows)
+        window->animating = false;
+    // Drain the last requests
+    spinEventLoop(50);
+    return rates;
+}
+
+static bool updatesArePacedByDisplay()
+{
+    // Platforms where update requests are driven by the display refresh
+    // and where frame rate preferences are honored.
+#if defined(Q_OS_APPLE)
+    return QGuiApplication::platformName() == "cocoa"_L1
+            || QGuiApplication::platformName() == "ios"_L1;
+#else
+    return false;
+#endif
+}
+
+#define REQUIRE_DISPLAY_PACED_UPDATES()                                             \
+    do {                                                                            \
+        if (!updatesArePacedByDisplay())                                            \
+            QSKIP("Update requests are not paced by the display on this platform"); \
+    } while (false)
+
+// A range of rates, in frames per second
+struct RateBounds
+{
+    double slowest;
+    double fastest;
+};
+
+// The rate a window without a preference gets. That's normally the screen's
+// refresh rate, but the system may run the display link slower (e.g. in low
+// power mode), so prefer what the display link reports.
+static double unthrottledRate(const AnimatingWindow &window)
+{
+    if (window.lastUpdateRequestInterval > 0)
+        return 1.0 / window.lastUpdateRequestInterval;
+    return window.screen()->refreshRate();
+}
+
+// The rates a window without a preference may get: the rate the display link
+// reports, or if it doesn't report one, between half the refresh rate and the
+// refresh rate, as the system may run the display link slower without telling
+// (e.g. in Low Power Mode).
+static RateBounds unthrottledRates(const AnimatingWindow &window)
+{
+    if (window.lastUpdateRequestInterval > 0)
+        return { 1.0 / window.lastUpdateRequestInterval, 1.0 / window.lastUpdateRequestInterval };
+    const double refreshRate = window.screen()->refreshRate();
+    return { refreshRate / 2, refreshRate };
+}
+
+static void showAnimatingWindow(AnimatingWindow &window, const QRect &geometry)
+{
+    window.setTitle(QLatin1String(QTest::currentTestFunction()));
+    window.setGeometry(geometry);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+}
+
+// A rate is "close" when within 40% below, allowing for missed frames on
+// loaded machines, and within 10% above, as we should never overshoot. That
+// can't tell adjacent exact rates apart (e.g. 24 and 30).
+#define QCOMPARE_RATE_BETWEEN(actual, slowest, fastest)                                     \
+    do {                                                                                    \
+        const double a = actual;                                                            \
+        const double lo = slowest;                                                          \
+        const double hi = fastest;                                                          \
+        if (a < lo * 0.6 || a > hi * 1.1)                                                   \
+            QFAIL(qPrintable(u"Rate %1/s is not within %2/s and %3/s"_s.arg(a).arg(lo).arg(hi))); \
+    } while (false)
+#define QCOMPARE_RATE(actual, expected) QCOMPARE_RATE_BETWEEN(actual, expected, expected)
+#define QCOMPARE_RATE_IN(actual, bounds) QCOMPARE_RATE_BETWEEN(actual, (bounds).slowest, (bounds).fastest)
+
+
+void tst_QWindow::requestUpdateRate()
+{
+    REQUIRE_DISPLAY_PACED_UPDATES();
+
+    AnimatingWindow window;
+    showAnimatingWindow(window, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    const double refreshRate = window.screen()->refreshRate();
+    const double rate = measureUpdateRates({ &window }).first();
+    qCDebug(lcTests) << "Update rate" << rate << "on screen with refresh rate" << refreshRate
+                     << "display link rate" << unthrottledRate(window);
+
+    QVERIFY(window.allOnMainThread);
+    QCOMPARE_RATE_IN(rate, unthrottledRates(window));
+}
+
+void tst_QWindow::requestUpdateMultipleWindows()
+{
+    REQUIRE_DISPLAY_PACED_UPDATES();
+
+    AnimatingWindow window1;
+    AnimatingWindow window2;
+    showAnimatingWindow(window1, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    showAnimatingWindow(window2, QRect(m_availableTopLeft + QPoint(120, 120), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+    if (window1.screen() != window2.screen())
+        QSKIP("Windows ended up on different screens");
+
+    const auto rates = measureUpdateRates({ &window1, &window2 });
+    QCOMPARE_RATE_IN(rates.at(0), unthrottledRates(window1));
+    QCOMPARE_RATE_IN(rates.at(1), unthrottledRates(window2));
+}
+
+void tst_QWindow::requestUpdateCreatedButHidden()
+{
+    // Update requests are delivered to windows that are created but not
+    // visible. Qt Quick and others rely on this when preparing the first frame.
+    QWindow window;
+    window.setGeometry(QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    window.create();
+    QVERIFY(!window.isVisible());
+
+    window.requestUpdate();
+    QPlatformWindow *platformWindow = window.handle();
+    QVERIFY(platformWindow);
+    QVERIFY(platformWindow->hasPendingUpdateRequest());
+    QTRY_VERIFY(!platformWindow->hasPendingUpdateRequest());
+}
+
+void tst_QWindow::requestUpdateAfterHideAndShow()
+{
+    AnimatingWindow window;
+    showAnimatingWindow(window, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    // Hiding pauses the display link on some platforms, make
+    // sure updates resume once the window is shown again.
+    window.hide();
+    spinEventLoop(100);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    window.startAnimating();
+    QTRY_VERIFY(window.updateRequests > 5);
+    window.animating = false;
+}
+
+void tst_QWindow::requestUpdateSwapIntervalZero()
+{
+    // With vsync disabled we fall back to timer based update requests
+    AnimatingWindow window;
+    QSurfaceFormat format;
+    format.setSwapInterval(0);
+    window.setFormat(format);
+    showAnimatingWindow(window, QRect(m_availableTopLeft + QPoint(80, 80), m_testWindowSize));
+    if (QTest::currentTestFailed())
+        return;
+
+    const double rate = measureUpdateRates({ &window }, 500).first();
+    QVERIFY(window.allOnMainThread);
+    QVERIFY2(rate > 10, qPrintable(QString::number(rate)));
 }
 
 void tst_QWindow::activateDeactivateEvent()
