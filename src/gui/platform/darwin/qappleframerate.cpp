@@ -147,17 +147,27 @@ std::optional<QAppleFrameRateRange> QAppleFrameRateRange::fromVariant(const QVar
     return std::nullopt;
 }
 
-// The number of display refreshes per frame if rate is an exact rate the
-// display can show (displayRate divided by a whole number), or 0.
+// The display's refresh rate in whole frames per second, e.g. 120 for a 120 Hz
+// display. CoreAnimation only runs display links at rates that divide it
+// evenly and are whole numbers themselves: 240 / 9 = 26.67 on a 240 Hz display
+// gives 30, and 240 / 7 = 34.29 gives 40. 0 if unknown.
+static int wholeDisplayRate(qreal displayRate)
+{
+    return displayRate >= 1 && displayRate < 1e6 ? qRound(displayRate) : 0;
+}
+
+// The number of display refreshes per frame if the range is an exact rate the
+// display can show (its refresh rate divided by a divisor of it), or 0.
 static int exactFramesPerDelivery(const QAppleFrameRateRange &range, qreal displayRate)
 {
-    if (!(displayRate > 0) || !(range.preferred > 0) || range.minimum != range.preferred
+    const int rate = wholeDisplayRate(displayRate);
+    if (!rate || !(range.preferred > 0) || range.minimum != range.preferred
         || range.maximum != range.preferred) {
         return 0;
     }
     const double frames = displayRate / range.preferred;
     const int n = qRound(frames);
-    return n >= 1 && qAbs(frames - n) < 1e-3 * frames ? n : 0;
+    return n >= 1 && qAbs(frames - n) < 1e-3 * frames && rate % n == 0 ? n : 0;
 }
 
 QAppleFrameRateRange QAppleFrameRateRange::forPreferredFrameRate(qreal framesPerSecond,
@@ -171,12 +181,16 @@ QAppleFrameRateRange QAppleFrameRateRange::forPreferredFrameRate(qreal framesPer
         return QAppleFrameRateRange(rate, rate, rate);
     }
 
-    // Clamped, as tiny rates would overflow
-    const double ratio = std::min(displayRate / framesPerSecond, 1e6);
-    int frames = std::max(1, int(std::floor(ratio + 0.5 - 1e-3)));
-    // Never below the preferred rate, so that content at that rate doesn't
-    // skip frames, e.g. 25 fps on a 120 Hz display gives 30, not 24.
-    while (frames > 1 && displayRate / frames < framesPerSecond * 0.99)
+    // The most refreshes per frame, i.e. the slowest rate, that is not below the
+    // preferred rate (within 1%, so that 23.976 counts as 24), so that content at
+    // that rate doesn't skip frames: 25 fps on a 120 Hz display gives 30, not 24.
+    // Clamped, as tiny rates would overflow, and as no more refreshes per frame
+    // than the display has per second divide its refresh rate.
+    const int wholeRate = wholeDisplayRate(displayRate);
+    int frames = int(std::clamp(displayRate / (framesPerSecond * 0.99), 1.0,
+                                wholeRate ? double(wholeRate) : 1e6));
+    // And a rate the system supports, see wholeDisplayRate()
+    while (frames > 1 && wholeRate % frames != 0)
         --frames;
     // Every refresh is what the system does by default. Don't pin the maximum
     // rate explicitly, the system knows better what that is at any moment.

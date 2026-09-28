@@ -324,7 +324,22 @@ void tst_QAppleFrameRate::forPreferredFrameRate_data()
     QTest::newRow("30@59.94") << 59.94 << 30.0 << 29.97;
     QTest::newRow("48@240") << 240.0 << 48.0 << 48.0;
     QTest::newRow("80@240") << 240.0 << 80.0 << 80.0;
-    QTest::newRow("25@240") << 240.0 << 25.0 << 240.0 / 9;
+    // CoreAnimation only runs display links at whole rates that divide the
+    // refresh rate (measured on a 240 Hz display: 240 / 9 = 26.67 gives 30,
+    // 240 / 7 = 34.29 gives 40, 240 / 13 = 18.46 gives 20), so only those are
+    // exact, and requested
+    QTest::newRow("25@240") << 240.0 << 25.0 << 30.0;
+    QTest::newRow("34@240") << 240.0 << 34.0 << 40.0;
+    QTest::newRow("18@240") << 240.0 << 18.0 << 20.0;
+    QTest::newRow("16@240") << 240.0 << 16.0 << 16.0;
+    QTest::newRow("15@240") << 240.0 << 15.0 << 15.0;
+    QTest::newRow("17@120") << 120.0 << 17.0 << 20.0;
+    QTest::newRow("20@120") << 120.0 << 20.0 << 20.0;
+    QTest::newRow("30@144") << 144.0 << 30.0 << 36.0;
+    QTest::newRow("24@144") << 144.0 << 24.0 << 24.0;
+    // Tiny rates: at least once a second, the slowest the display can do exactly
+    QTest::newRow("0.5@240") << 240.0 << 0.5 << 1.0;
+    QTest::newRow("1e-9@120") << 120.0 << 1e-9 << 1.0;
     QTest::newRow("0") << 120.0 << 0.0 << 0.0;
     QTest::newRow("negative") << 120.0 << -1.0 << 0.0;
 }
@@ -364,8 +379,13 @@ void tst_QAppleFrameRate::unitedExactRates_data()
     QTest::newRow("24+60@240") << 240.0 << Range(24, 24, 24) << Range(60, 60, 60) << Range(120, 120, 120);
     QTest::newRow("48+80@240") << 240.0 << Range(48, 48, 48) << Range(80, 80, 80) << Range();
     QTest::newRow("24+48@240") << 240.0 << Range(24, 24, 24) << Range(48, 48, 48) << Range(48, 48, 48);
+    QTest::newRow("16+24@240") << 240.0 << Range(16, 16, 16) << Range(24, 24, 24) << Range(48, 48, 48);
+    QTest::newRow("20+48@240") << 240.0 << Range(20, 20, 20) << Range(48, 48, 48) << Range();
     // Not exact on this display: previous behavior
     QTest::newRow("25+60@120") << 120.0 << Range(25, 25, 25) << Range(60, 60, 60) << Range(60, 60, 60);
+    // Not a rate the system supports (240 / 9), so not exact either
+    QTest::newRow("26.67+60@240") << 240.0 << Range(240.f / 9, 240.f / 9, 240.f / 9)
+                                  << Range(60, 60, 60) << Range(60, 60, 60);
     // Unknown display rate: previous behavior
     QTest::newRow("24+60@0") << 0.0 << Range(24, 24, 24) << Range(60, 60, 60) << Range(60, 60, 60);
 }

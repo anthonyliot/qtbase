@@ -1289,14 +1289,15 @@ qreal QWindow::opacity() const
 
     The rate is a hint. On macOS and iOS, update requests are delivered at a
     rate close to the preferred rate that the display can show with an even
-    cadence, which is its refresh rate divided by a whole number. When the
-    preferred rate can't be shown exactly, the next faster such rate is used,
-    so that no frame of content at the preferred rate has to be skipped. For
-    example, on a 120 Hz display 120, 60, 40, 30 and 24 are exact, 25 gives 30
-    update requests per second, and 48 and 50 give 60. Rates within 1% of an
-    exact rate count as exact, so 23.976 (24000/1001), 29.97 and 59.94 give 24,
-    30 and 60. Update requests are never delivered faster than the display
-    refreshes.
+    cadence: its refresh rate divided by a whole number, where the result is a
+    whole number of frames per second as well. When the preferred rate can't
+    be shown exactly, the next faster such rate is used, so that no frame of
+    content at the preferred rate has to be skipped. For example, on a 120 Hz
+    display 120, 60, 40, 30, 24 and 20 are exact, 25 gives 30 update requests
+    per second, and 48 and 50 give 60. On a 240 Hz display 80 and 48 are exact
+    as well. Rates within 1% of an exact rate count as exact, so 23.976
+    (24000/1001), 29.97 and 59.94 give 24, 30 and 60. Update requests are never
+    delivered faster than the display refreshes.
 
     The system may still deliver fewer update requests, for instance in low
     power mode, while the window is covered, or when rendering a frame takes

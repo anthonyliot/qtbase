@@ -57,9 +57,10 @@ struct Q_GUI_EXPORT QAppleFrameRateRange
     static std::optional<QAppleFrameRateRange> fromString(QStringView string);
 
     // The range for QWindow::preferredFrameRate on a display refreshing at
-    // displayRate: the exact rate displayRate / n closest to framesPerSecond,
-    // but not below it (within 1%), so that no content frame is skipped. The
-    // default range if that's every refresh.
+    // displayRate: the slowest exact rate the display supports (displayRate / n,
+    // with n dividing displayRate) that is not below framesPerSecond (within 1%),
+    // so that no content frame is skipped. The default range if that's every
+    // refresh.
     static QAppleFrameRateRange forPreferredFrameRate(qreal framesPerSecond, qreal displayRate) noexcept;
 
     // The range a shared display link needs to satisfy both requests. If both
@@ -102,12 +103,16 @@ Q_GUI_EXPORT QDebug operator<<(QDebug debug, const QAppleFrameRateRange &range);
 
 // Tracks a window's frame-rate preference and pacing state for a platform window.
 //
-// The preference comes from the "_q_preferredFrameRateRange" QWindow property, or
-// if that isn't set from the QT_APPLE_PREFERRED_FRAME_RATE_RANGE environment
-// variable. Invalid values are warned about once and treated as default.
+// The preference comes from QWindow::preferredFrameRate, mapped to an exact rate
+// of the window's display with QAppleFrameRateRange::forPreferredFrameRate(). If
+// that isn't set, from the "_q_preferredFrameRateRange" QWindow property, which
+// also accepts ranges, or else from the QT_APPLE_PREFERRED_FRAME_RATE_RANGE
+// environment variable, a default for all windows (e.g. of unmodified
+// applications). Invalid values of those two are warned about once and treated
+// as default.
 //
-// Both the property and the environment variable are internal and unsupported,
-// meant for experimentation until there is public API for this.
+// The property and the environment variable are internal and unsupported, meant
+// for experimentation. Applications should use QWindow::preferredFrameRate.
 class Q_GUI_EXPORT QAppleFrameRatePreference
 {
 public:

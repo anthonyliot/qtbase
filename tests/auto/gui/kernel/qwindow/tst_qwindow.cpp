@@ -3364,6 +3364,19 @@ static double qtPacedRate(double refreshRate, double requestedRate)
     return refreshRate / n;
 }
 
+// The number of display refreshes per frame for QWindow::preferredFrameRate:
+// the most whose rate isn't below the preferred rate (within 1%), among those
+// the system supports, which are the whole rates that divide the refresh rate
+// (e.g. on 240 Hz, 25 gives 30, as 240 / 9 isn't a whole rate).
+static int framesForPreferredRate(double refreshRate, double preferred)
+{
+    const int wholeRate = qRound(refreshRate);
+    int n = int(std::clamp(refreshRate / (preferred * 0.99), 1.0, double(std::max(1, wholeRate))));
+    while (n > 1 && wholeRate % n != 0)
+        --n;
+    return n;
+}
+
 // When a single window determines the display link's rate, the system picks it,
 // and may snap to the next faster rate it supports instead.
 struct RateBounds
@@ -3765,12 +3778,9 @@ void tst_QWindow::preferredFrameRateApi()
     if (preferred > refreshRate)
         QSKIP("Screen refresh rate too low for this test");
 
-    // Qt picks the exact rate the display can show that's closest to the
-    // preferred rate, but not below it: the refresh rate divided by n
-    const double frames = refreshRate / preferred;
-    int n = std::max(1, int(std::floor(frames + 0.5 - 1e-3)));
-    while (n > 1 && refreshRate / n < preferred * 0.99)
-        --n;
+    // Qt picks the slowest exact rate the display can show that's not below
+    // the preferred rate: the refresh rate divided by n
+    const int n = framesForPreferredRate(refreshRate, preferred);
     const double expectedRate = refreshRate / n;
 
     window.setPreferredFrameRate(preferred);
@@ -3980,9 +3990,7 @@ void tst_QWindow::preferredFrameRatePerScreen()
     rates = measureUpdateRates({ &first, &second });
     QCOMPARE_RATE(rates.at(1), secondRate);
     if (screens.at(1)->refreshRate() >= 30) {
-        int n = std::max(1, int(std::floor(screens.at(1)->refreshRate() / 30 + 0.5 - 1e-3)));
-        while (n > 1 && screens.at(1)->refreshRate() / n < 30 * 0.99)
-            --n;
+        const int n = framesForPreferredRate(screens.at(1)->refreshRate(), 30);
         QCOMPARE_RATE(rates.at(0), screens.at(1)->refreshRate() / n);
     }
 }
