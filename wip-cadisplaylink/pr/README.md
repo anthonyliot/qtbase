@@ -188,10 +188,10 @@ be decided before upstreaming.
 * Done: the qtbase and qtdeclarative series (`wip/cadisplaylink-gerrit` in `qt5-series/`) are
   committed and signed (`%G?` G for all 11), with exactly the tested trees (checked again on
   2026-09-29 against the recorded lists).
-* qtmultimedia: create the signed series with `qtmultimedia-series/commit-series.sh` (blocked on
-  AppleConnect; it checks every tree against `qtmultimedia-series/trees.txt`), then point qt5 at it:
-  `qtmultimedia-series/finish.sh` does all of it, including the qtbase documents commit and the
-  pushes to the forks.
+* Done: the qtmultimedia series is committed and signed on `wip/cadisplaylink`, `f0c358d29` (M1)
+  to `0e21dc1b3` (M6), each commit checked against its tested tree by `commit-series.sh`, and pushed
+  to the fork on 2026-09-29 with the qtbase documents and the qt5 pointers. Qt's sanity bot hints
+  that M6's test uses `qWait()` (`framesWithin()` waits a fixed time on purpose, to count frames).
 * qtmultimedia, the author's decisions: a QTBUG and `Pick-to:` for M1 and M2, which fix released
   versions (R7-8).
 * qtmultimedia, M5's two round 12 nits, when M5 is revisited after the measurement: a test for the
