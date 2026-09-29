@@ -1,0 +1,7 @@
+WIP: Record the qtmultimedia series and its review rounds
+
+The per-commit documents of the six qtmultimedia commits (series/M1 to
+M6), the qtmultimedia sections of README and TESTING, the review rounds
+with the author's responses, the series itself (messages, tested trees,
+the commit and verification scripts, pr/qtmultimedia-series/) and the
+probes (probes/qtmultimedia/).

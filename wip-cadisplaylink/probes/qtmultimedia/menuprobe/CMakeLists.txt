@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(menuprobe LANGUAGES CXX OBJCXX)
+find_package(Qt6 REQUIRED COMPONENTS Gui Multimedia)
+add_executable(menuprobe main.mm)
+target_link_libraries(menuprobe PRIVATE Qt6::Gui Qt6::Multimedia "-framework AppKit")

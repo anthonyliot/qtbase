@@ -1,0 +1,49 @@
+QVideoWindow: Let the display refresh at the video's frame rate
+
+On a display with a variable refresh rate, like ProMotion, the panel
+refreshes at its maximum rate unless the windows ask for less, even
+when a video window only shows a new frame 24 times per second.
+
+On such displays, while a media player plays, set
+QWindow::preferredFrameRate on the video window to the rate its frames
+arrive at, the stream's frame rate times the playback rate, but only
+when the display shows that rate with an even cadence, every frame for
+the same number of refreshes, like 24 fps on a 120 Hz display. Other
+rates are paced at the next faster exact rate: 25 fps at 30 Hz would
+show every fifth frame for twice as long as the others, more unevenly
+than refreshing at the full rate, so they get no preference, as before.
+A whole multiple of the rate counts too, and rates up to 0.2% slower
+than an exact one, like 23.976 and 29.97, but not faster ones, whose
+frames would be dropped. qVideoPreferredFrameRate() computes
+it from the refresh rate of the window's screen, for every frame, and
+the preference is reset once it no longer applies, so it follows the
+window to other screens.
+
+The price is latency: alone on its display, the window is then shown
+on the grid of that rate, so a frame may wait up to one frame interval
+for it, instead of up to one refresh, and a frame arriving close to a
+tick may slip to the next one. 23.976 and 29.97 fps content shows about
+one frame in 1000 twice as long (every 42 and 33 seconds). That's why
+displays with a fixed refresh rate get no preference, as it would only
+delay frames there, and why a paused player's frames, which arrive when
+seeking, get none either.
+
+Only on macOS, where the preference paces update requests to the
+display (with vertical sync) and NSScreen tells a display with a
+variable refresh rate. iOS paces too, but doesn't tell. On the other
+platforms the preference is a minimum interval from the previous
+update request, which could only make frames late, as the window
+requests one update per frame anyway. And only for a media
+player's frames: cameras report the maximum rate of their format but
+deliver fewer frames in low light, and screen captures deliver on
+changes. A preference that the window didn't set itself is neither
+replaced nor reset (unless it's the same value).
+
+QVideoWidget shows its video in a QVideoWindow, and so gets it too; its
+documentation says so. QVideoSink gets a private accessor for its
+source, the media player. Variable frame rate content reports its
+average rate, so faster segments may be paced below their rate.
+
+Requires QWindow::preferredFrameRate (Qt 6.13).
+
+Change-Id: I9b397e8ac6623a11561d90acae176764f813d2d2

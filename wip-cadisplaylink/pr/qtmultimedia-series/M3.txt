@@ -1,0 +1,20 @@
+darwin: Stop using the deprecated CVDisplayLink in AVFDisplayLink
+
+AVFDisplayLink already used CADisplayLink on iOS, and on macOS 15 and
+later via -[NSScreen displayLinkWithTarget:selector:], with a
+CVDisplayLink fallback for macOS 14.x behind an @available(macOS 15.0)
+check.
+
+That NSScreen API is available from macOS 14.0, and our minimum
+deployment target is 14.4, so the fallback isn't needed. Use the
+CADisplayLink path unconditionally on macOS and drop the CVDisplayLink
+code, which is deprecated. CoreVideo is still needed for the pixel
+buffer types, so it stays linked.
+
+On macOS 14 this means, as on later versions, that the display link
+calls back on the main run loop instead of on a thread of its own, and
+that it's the one of NSScreen.mainScreen, the screen with the key
+window when it's created, instead of kCGDirectMainDisplay, the display
+with the menu bar.
+
+Change-Id: Idbc052e25c70a48c05c121874e396abca0702b3f

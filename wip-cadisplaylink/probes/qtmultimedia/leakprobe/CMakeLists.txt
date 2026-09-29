@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(leakprobe LANGUAGES CXX)
+find_package(Qt6 REQUIRED COMPONENTS Gui Multimedia)
+add_executable(leakprobe main.cpp)
+target_link_libraries(leakprobe PRIVATE Qt6::Gui Qt6::Multimedia)

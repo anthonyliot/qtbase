@@ -1,0 +1,16 @@
+darwin: Don't leak the display link of AVFDisplayLink
+
+A display link retains its target until it's invalidated. The target
+of AVFDisplayLink's display link, a DisplayLinkObserver, only
+invalidated it when deallocated, which then never happened:
+~AVFDisplayLink released the observer, but the display link kept it
+alive. So every media player leaked a display link and an observer, on
+iOS and on macOS 15 and later, where the display link is a
+CADisplayLink.
+
+Invalidate the display link in ~AVFDisplayLink, before releasing the
+observer. For that, -[DisplayLinkObserver setDisplayLink:] also has to
+forget the display link it releases when given nil, instead of keeping
+a pointer to it, which dealloc would then message again.
+
+Change-Id: I38b6dae4b00580e8241dd075684e32d437b997a9

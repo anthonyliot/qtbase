@@ -1,0 +1,20 @@
+darwin: Keep polling for video frames while menus and dialogs are open
+
+AVFDisplayLink scheduled its display link in the default run loop mode
+only, so the display link didn't fire while the main run loop ran in
+another mode: while a menu is open, during a live resize, and in modal
+sessions like QDialog::exec(), QMessageBox or a native QFileDialog. The
+video froze until then, while the audio kept playing.
+
+Schedule it in the common modes, like the display link that Qt uses
+for update requests on macOS. Qt delivers the event that the display
+link posts in those modes too.
+
+On iOS, the common modes also include the mode UIKit runs the run loop
+in while it tracks touches.
+
+The display link is a CADisplayLink on iOS and on macOS 15 and later.
+On macOS 14, a CVDisplayLink called back on a thread of its own, so the
+video didn't freeze there.
+
+Change-Id: I2e3535f843c182dced14d966ddd954787c9e5c70

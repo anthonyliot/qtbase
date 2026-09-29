@@ -25,8 +25,9 @@ Review findings and the author's answers are kept in [review/](review/).
 | qtmultimedia | `wip/cadisplaylink` | `635067497` (dev) | git@github.com:anthonyliot/qtmultimedia.git |
 | qt5 | `wip/cadisplaylink` | dev | git@github.com:anthonyliot/qt5.git (submodule pointers only) |
 
-Full diffs: `git -C qtbase diff 25d8223e59f..wip/cadisplaylink -- . ':!wip-cadisplaylink'` and
-`git -C qtdeclarative diff ec2f2fdea8..wip/cadisplaylink`.
+Full diffs: `git -C qtbase diff 25d8223e59f..wip/cadisplaylink -- . ':!wip-cadisplaylink'`,
+`git -C qtdeclarative diff ec2f2fdea8..wip/cadisplaylink` and
+`git -C qtmultimedia diff 635067497..wip/cadisplaylink`.
 
 ## Architecture in one page
 
@@ -76,6 +77,35 @@ see [TESTING.md](TESTING.md). Documents: [series/](series/).
 |---|---|---|
 | [D1](series/D1-animation-interval.md) | `7c4be21eb2` Advance vsync based animations by the window's frame interval | 01-04, 06, the Animator test fixes |
 | [D2](series/D2-qml-doc-tests.md) | `d8bc4071be` Document Window.preferredFrameRate, and test it from QML | 05, R1-6/R1-10 fixes |
+
+### qtmultimedia (review rounds 4 to 12)
+
+The qtmultimedia branch is itself the series (no WIP commits): six commits on `635067497`, each
+built and tested at its own state (TESTING.md, "Series states"). Their trees are recorded in
+`qtmultimedia-series/trees.txt` (and kept from `git gc` by `refs/cadisplaylink/series/S1..S6` in
+qtmultimedia), messages in `qtmultimedia-series/M{1..6}.txt`, and
+`qtmultimedia-series/commit-series.sh` commits them signed, refusing a tree that differs from the
+tested one; `qtmultimedia-series/finish.sh` does the whole sequence. The probes are in
+`../probes/qtmultimedia/`.
+
+| # | Commit | Contains |
+|---|---|---|
+| [M1](series/M1-avfdisplaylink-leak.md) | darwin: Don't leak the display link of AVFDisplayLink | the observer/link retain cycle (pre-existing), R6-3 |
+| [M2](series/M2-common-run-loop-modes.md) | darwin: Keep polling for video frames while menus and dialogs are open | R7-3 (pre-existing on macOS 15+ and iOS) |
+| [M3](series/M3-drop-cvdisplaylink.md) | darwin: Stop using the deprecated CVDisplayLink in AVFDisplayLink | R1-10 (was `2152cdbd8`) |
+| [M4](series/M4-stream-frame-rate.md) | Report the stream frame rate of played video frames | FFmpeg and AVFoundation, R7-4 test |
+| [M5](series/M5-qvideowindow-preferred-rate.md) | QVideoWindow: Let the display refresh at the video's frame rate | R6-1, R6-5, R7-1, R7-2, R8-1, R8-2, R8-4, R8-5, R9-1 to R9-3, R10-1, R10-4, R11-1, R11-2, R11-5 |
+| [M6](series/M6-per-screen-decode-clock.md) | darwin: Poll for video frames in sync with the display the video is on | R6-2, R6-4, R6-7, R6-8, R6-10, R7-5, R7-7 |
+
+In short: on a macOS display with a variable refresh rate (ProMotion, Adaptive-Sync), a
+`QVideoWindow` (and so `QVideoWidget`) asks, while a media player plays, for the rate its frames
+arrive at (the stream's rate times the playback rate), when the display shows it with an even
+cadence (24 fps on 120 Hz, 30 fps on 60, 120 and 240 Hz, ...), so that the display can refresh at
+that rate; the qtbase changes turn it into a display rate per screen, and it's reset once it no
+longer applies. Fixed refresh rate displays, iOS, paused players and cameras get none. The
+AVFoundation backend's decode clock follows the display the video is shown on, and keeps running in
+menus and modal sessions. QML `VideoOutput` sets no preference (R6-9): its window is the whole
+scene's.
 
 ## Commits of the working branches and their documents
 
@@ -155,8 +185,48 @@ be decided before upstreaming.
   with `QT_APPLE_PREFERRED_FRAME_RATE_RANGE=120` and `=1,120` (and the default and `--rate 30`),
   many short launches, on this branch and on the CVDisplayLink baseline plugin, and record the
   stall counts in TESTING.md. With the round 1 changes, these ranges are sent as the default range.
-* Sign and create the series commits (blocked on AppleConnect), check each commit's tree against
-  `/tmp/r2/series-trees.txt` and `/tmp/r2/decl-trees.txt`, and have the reviewer check them.
+* Done: the qtbase and qtdeclarative series (`wip/cadisplaylink-gerrit` in `qt5-series/`) are
+  committed and signed (`%G?` G for all 11), with exactly the tested trees (checked again on
+  2026-09-29 against the recorded lists).
+* qtmultimedia: create the signed series with `qtmultimedia-series/commit-series.sh` (blocked on
+  AppleConnect; it checks every tree against `qtmultimedia-series/trees.txt`), then point qt5 at it:
+  `qtmultimedia-series/finish.sh` does all of it, including the qtbase documents commit and the
+  pushes to the forks.
+* qtmultimedia, the author's decisions: a QTBUG and `Pick-to:` for M1 and M2, which fix released
+  versions (R7-8).
+* qtmultimedia, M5's two round 12 nits, when M5 is revisited after the measurement: a test for the
+  window forgetting its own value (R12-3), and "internal" in the QVideoWidget documentation.
+* qtmultimedia, a session with the MacBook's built-in ProMotion panel (R9-4, R10-2; steps 1 to 3
+  done on 2026-09-29, TESTING.md "ProMotion panel"), which is also
+  the two-screen setup with the G95SC. `B=~/Desktop/bitbucket`,
+  `P=$B/qt5/qtbase/wip-cadisplaylink/probes/qtmultimedia`:
+  0. Open the lid, and make the built-in display the main display (System Settings > Displays):
+     test windows open on the main display.
+  1. `clang++ -fobjc-arc -framework AppKit $P/vrr/vrr.mm -o /tmp/vrr && /tmp/vrr`: the built-in
+     panel is reported "variable" (the first time `hasVariableRefreshRate()` would be true).
+  2. `cd $B/qtmm-build/tests/auto/integration/qvideoframebackend && QT_MEDIA_BACKEND=ffmpeg
+     ./tst_qvideoframebackend videoWindow_preferredFrameRate_isOnlySetForVariableRefreshRate
+     videoWindow_receivesFrames_afterMovingToAnotherScreen`: the first logs "display with a
+     variable refresh rate: true" and expects a preference; the second runs (two screens).
+  3. A 24 fps file, `ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=24 -t 300 -pix_fmt yuv420p
+     /tmp/24fps.mp4`, played by the viewprobe (`cmake -S $P/viewprobe -B /tmp/vp
+     -DCMAKE_PREFIX_PATH=$B/qt5-build-nofw && cmake --build /tmp/vp`), `QT_MEDIA_BACKEND=ffmpeg
+     /tmp/vp/viewprobe /tmp/24fps.mp4 120`, which prints the frames, the preferred frame rate and
+     the screen every second: 24 frames, preferredFrameRate 24.000 on the panel.
+  4. The panel's refresh rate meanwhile: Instruments, "Animation Hitches" template, the Display
+     track (refresh every 41.7 ms if the panel follows). Not with a probe of its own CADisplayLink:
+     that asks for its own rate. Again with `QT_MEDIA_BACKEND=darwin`: whether AVFDisplayLink's
+     decode link keeps the panel at 120 Hz (R6-6), in which case M5 costs latency for nothing
+     there; if the panel doesn't drop with FFmpeg either, reconsider M5 (the round 10 approval's
+     condition).
+  5. The latency the 24 Hz grid adds (R8-1), in the same trace: from the video window's commit to
+     the refresh that shows it, for `/tmp/24fps.mp4` (paced at 24) and for a 25 fps file (no
+     preference, the full rate), e.g. the same ffmpeg line with `rate=25`, or the tests'
+     `colors.mp4`.
+  6. The move R9-1 is about: while step 3 plays, drag the window to the G95SC and back:
+     preferredFrameRate goes to 0.000 on the G95SC (fixed rate) and back to 24.000 on the panel.
+  7. M6 (R7-5): the same with `QT_MEDIA_BACKEND=darwin`, the window on the G95SC (not the main
+     display): 24 frames per second there too, from the G95SC's display link.
 * Decide the copyright holder of the new files.
 
 ## Building and testing
@@ -167,6 +237,18 @@ Builds used (paths relative to `~/Desktop/bitbucket`):
 * `qt5-build-nofw` + `qt5-build-nofw-qtdeclarative` (+ qtshadertools): non-framework build for Qt
   Quick (the framework build breaks moc include_next in qtdeclarative).
 * `qt5-build-cadisplaylink-ios`: iOS simulator build of the qtbase tests.
+* `qtmm-build`: qtmultimedia with tests, configured with `qt5-build-nofw/bin/qt-configure-module`
+  (FFmpeg from Homebrew). Like every add-on built against an uninstalled qtbase, it writes its
+  libraries and plugins into `qt5-build-nofw/lib` and `plugins/multimedia`, so an upstream A/B swaps
+  those four files (`pr/qtmultimedia-series/verify/ab-swap.sh <set>`) instead of using a second
+  build.
+
+```sh
+B=~/Desktop/bitbucket
+cmake --build $B/qtmm-build --target tst_qvideoframebackend tst_qvideowidget tst_qmediaplayerbackend
+cd $B/qtmm-build/tests/auto/integration/qvideoframebackend
+QT_MEDIA_BACKEND=darwin ./tst_qvideoframebackend; QT_MEDIA_BACKEND=ffmpeg ./tst_qvideoframebackend
+```
 
 ```sh
 B=~/Desktop/bitbucket
@@ -195,12 +277,22 @@ Test results: [TESTING.md](TESTING.md).
   CVDisplayLink A/B yet (the panel wasn't available for round 1). Mitigated: such ranges are sent as
   the default range, and a watchdog recreates a display link that hasn't called back for ten frames
   (at least 1 s) while update requests are pending (verified with a simulated stall).
-* **qtmultimedia**: `AVFDisplayLink` kept a CVDisplayLink fallback for macOS 14.x behind an
-  `@available(macOS 15.0)` check, though the `-[NSScreen displayLinkWithTarget:selector:]` API is
-  available from macOS 14.0 and our floor is 14.4. Now removed (review R1-10, resolved): the
-  CADisplayLink path is used unconditionally on macOS. Fork branch `wip/cadisplaylink`, commit
-  `2152cdbd8`; the qt5 superproject points at it. Built (the darwin media plugin) against the
-  non-framework Qt build; the changed file compiles with no warnings.
+* **qtmultimedia**: `AVFDisplayLink`'s CVDisplayLink fallback for macOS 14.x is removed (R1-10,
+  resolved, M3). Still open there, all documented in the M documents:
+  * Video only asks for its rate on macOS displays with a variable refresh rate, while a media
+    player plays, and when the display shows it evenly: 25 and 50 fps content, and 24 fps on 60 Hz,
+    keep the display at its full rate (R7-1, R8-1, R8-2, R9-2, by design). Where it asks, the window
+    is shown on the grid of that rate: a frame may wait up to one frame interval, a frame near a
+    tick may slip to the next, and 23.976 and 29.97 fps show about one frame in 1000 twice as long
+    (R8-1, R9-3, R10-1). Content faster than an exact rate gets none, so on a display just below a
+    whole rate (59.94 Hz) whole-rate content (30 fps) does too (R11-1). With the AVFoundation
+    backend its decode display link may keep the panel at its full rate anyway (R6-6), so there the
+    preference may only cost that latency; FFmpeg, the default backend, has no such link.
+  * Variable frame rate video asks for its average rate (R6-5).
+  * The AVFoundation decode clock runs at its screen's maximum rate, which may keep a ProMotion
+    panel above the video's rate (R6-6, follow-up; not measurable on a fixed-rate display).
+  * QML `VideoOutput` sets no preference; the application sets `Window.preferredFrameRate` (R6-9).
+  * No automated test for the decode clock following the window's screen (one display here).
 
 See `../REVIEW-API.md` for the reasoning; in short:
 
@@ -213,3 +305,7 @@ See `../REVIEW-API.md` for the reasoning; in short:
 * iOS: nested event loops in delivery are not handled (re-entrant delivery).
 * The live-resize event tap workaround is kept but not re-validated with CADisplayLink.
 * No public frame timing (target presentation time) yet; video apps should pick frames by time.
+* Follow-up for the qtbase docs (G4, from the qtmultimedia review round 9):
+  `QWindow::preferredFrameRate` doesn't say that a window paced below the display's rate is
+  delivered on the grid of that rate, so an update may wait up to one interval of it. A sentence
+  would help applications that opt in.

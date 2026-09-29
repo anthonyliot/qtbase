@@ -1,0 +1,6 @@
+WIP: Point qtbase and qtmultimedia at the reviewed CADisplayLink work
+
+qtmultimedia: the reviewed series (leak fix, common run loop modes,
+CVDisplayLink removal, stream frame rate, QVideoWindow preferred rate
+on variable refresh rate displays, per-screen decode clock). qtbase:
+its PR documents.

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(viewprobe LANGUAGES CXX)
+find_package(Qt6 REQUIRED COMPONENTS Gui Multimedia MultimediaPrivate)
+add_executable(viewprobe main.cpp)
+target_link_libraries(viewprobe PRIVATE Qt6::Gui Qt6::Multimedia Qt6::MultimediaPrivate)

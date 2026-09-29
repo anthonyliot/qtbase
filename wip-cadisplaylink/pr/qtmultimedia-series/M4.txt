@@ -1,0 +1,13 @@
+Report the stream frame rate of played video frames
+
+The FFmpeg and AVFoundation media player backends know the frame rate
+of the video stream, but left it at 0 in the format of the frames they
+deliver, so a video output couldn't tell the rate the content plays
+at.
+
+Set it from the average frame rate of the stream with FFmpeg, and from
+the nominal frame rate of the video track with AVFoundation, which was
+already used to estimate the end time of each frame. The other backends
+still report 0.
+
+Change-Id: Ic99b78a3f2c5e3da1263a85571302fa7c5ceceae

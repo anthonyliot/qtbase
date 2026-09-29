@@ -1,0 +1,24 @@
+darwin: Poll for video frames in sync with the display the video is on
+
+AVFDisplayLink paces how often the AVFoundation media player polls for
+a new decoded frame. On macOS it used the display link of the main
+screen, the screen of the window with keyboard focus when it's created,
+not necessarily the one the video is shown on, so the video could be
+paced by another, slower display.
+
+Let video outputs tell their platform video sink the window they show
+the frames in, with a new QPlatformVideoSink::setDisplayWindow(), which
+QVideoWindow (and so QVideoWidget) and the QML VideoOutput call. Unlike
+setWinId(), it doesn't make the sink render into the window. The
+VideoOutput passes its window as is: a QQuickWidget keeps the screen of
+the window it renders to offscreen in sync with its own.
+
+On macOS, the darwin sink then uses the display link of the window's
+screen, found through the QNativeInterface::QCocoaScreen of the
+window's QScreen, and recreates it when the window moves to another
+screen. Like the main screen's display link before, it keeps delivering
+while the window is hidden, as the frames may be used for more than
+showing them. Without a window, or on other platforms than cocoa (e.g.
+offscreen), it uses the main screen as before. iOS is unchanged.
+
+Change-Id: Ie93c9ad86840e1f391993bdd6c1ebb02a7d79c92
