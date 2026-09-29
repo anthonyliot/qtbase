@@ -22,6 +22,7 @@ Review findings and the author's answers are kept in [review/](review/).
 |---|---|---|---|
 | qtbase | `wip/cadisplaylink` | `25d8223e59f` (dev) | git@github.com:anthonyliot/qtbase.git |
 | qtdeclarative | `wip/cadisplaylink` | `ec2f2fdea8` (dev) | git@github.com:anthonyliot/qtdeclarative.git |
+| qtmultimedia | `wip/cadisplaylink` | `635067497` (dev) | git@github.com:anthonyliot/qtmultimedia.git |
 | qt5 | `wip/cadisplaylink` | dev | git@github.com:anthonyliot/qt5.git (submodule pointers only) |
 
 Full diffs: `git -C qtbase diff 25d8223e59f..wip/cadisplaylink -- . ':!wip-cadisplaylink'` and
@@ -194,10 +195,12 @@ Test results: [TESTING.md](TESTING.md).
   CVDisplayLink A/B yet (the panel wasn't available for round 1). Mitigated: such ranges are sent as
   the default range, and a watchdog recreates a display link that hasn't called back for ten frames
   (at least 1 s) while update requests are pending (verified with a simulated stall).
-* **qtmultimedia** still uses CVDisplayLink on macOS 14.x
-  (`src/plugins/multimedia/darwin/mediaplayer/avfdisplaylink.mm`, CADisplayLink only
-  `@available(macOS 15.0)`), though NSScreen/NSView display links exist from macOS 14.0. Follow-up
-  outside this PR (review R1-10).
+* **qtmultimedia**: `AVFDisplayLink` kept a CVDisplayLink fallback for macOS 14.x behind an
+  `@available(macOS 15.0)` check, though the `-[NSScreen displayLinkWithTarget:selector:]` API is
+  available from macOS 14.0 and our floor is 14.4. Now removed (review R1-10, resolved): the
+  CADisplayLink path is used unconditionally on macOS. Fork branch `wip/cadisplaylink`, commit
+  `2152cdbd8`; the qt5 superproject points at it. Built (the darwin media plugin) against the
+  non-framework Qt build; the changed file compiles with no warnings.
 
 See `../REVIEW-API.md` for the reasoning; in short:
 
