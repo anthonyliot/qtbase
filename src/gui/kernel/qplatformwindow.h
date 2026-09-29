@@ -117,6 +117,8 @@ public:
                                  const QScreen **resultingScreenReturn = nullptr);
 
     virtual void requestUpdate();
+    virtual void setPreferredFrameRate(qreal framesPerSecond);
+    virtual bool pacesUpdateRequests() const;
     bool hasPendingUpdateRequest() const;
     virtual void deliverUpdateRequest();
     virtual bool allowsIndependentThreadedRendering() const;

@@ -7906,9 +7906,9 @@ QRhiResource::Type QRhiGraphicsPipeline::resourceType() const
 
     Once the rendering has started, a simple way to request a new frame is
     QWindow::requestUpdate(). While on some platforms this is merely a small
-    timer, on others it has a specific implementation: for instance on macOS or
-    iOS it may be backed by
-    \l{https://developer.apple.com/documentation/corevideo/cvdisplaylink?language=objc}{CVDisplayLink}.
+    timer, on others it has a specific implementation: for instance on macOS and
+    iOS it is backed by
+    \l{https://developer.apple.com/documentation/quartzcore/cadisplaylink?language=objc}{CADisplayLink}.
     The example above is already prepared for update requests by handling
     QEvent::UpdateRequest.
 

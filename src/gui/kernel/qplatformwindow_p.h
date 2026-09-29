@@ -18,6 +18,7 @@
 
 #include <QtGui/private/qtguiglobal_p.h>
 #include <QtCore/qbasictimer.h>
+#include <QtCore/qelapsedtimer.h>
 #include <QtCore/qrect.h>
 #include <QtCore/qnativeinterface.h>
 #include <QtGui/qwindow.h>
@@ -57,6 +58,9 @@ class QPlatformWindowPrivate
 public:
     QRect rect;
     QBasicTimer updateTimer;
+    // When the last update request was delivered, to pace timer based
+    // update requests to the window's preferred frame rate
+    QElapsedTimer lastUpdateRequestDelivery;
 };
 
 // ----------------- QNativeInterface -----------------

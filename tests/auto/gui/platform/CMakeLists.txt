@@ -4,3 +4,6 @@
 if(QT_FEATURE_xcb)
     add_subdirectory(qx11info)
 endif()
+if(APPLE)
+    add_subdirectory(qappleframerate)
+endif()

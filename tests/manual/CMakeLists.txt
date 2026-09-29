@@ -7,6 +7,7 @@ if(UIKIT)
 endif()
 
 add_subdirectory(corelib)
+add_subdirectory(displaylink)
 if(WIN32)
     add_subdirectory(dropfromzip)
 endif()

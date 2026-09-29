@@ -1276,6 +1276,103 @@ qreal QWindow::opacity() const
 }
 
 /*!
+    \property QWindow::preferredFrameRate
+    \since 6.13
+    \brief the rate, in frames per second, at which the window prefers to
+    receive update requests.
+
+    Set this property to tell the platform how often the window intends to
+    render new frames while it keeps calling requestUpdate(), for example to
+    match the frame rate of video content, or to limit an animated user
+    interface to 60 or 30 frames per second to save power. On displays with a
+    variable refresh rate, the system can use it to choose a lower refresh rate.
+
+    The rate is a hint. On macOS and iOS, update requests are delivered at a
+    rate close to the preferred rate that the display can show with an even
+    cadence: its refresh rate divided by a whole number, where the result is a
+    whole number of frames per second as well. When the preferred rate can't
+    be shown exactly, the next faster such rate is used, so that no frame of
+    content at the preferred rate has to be skipped. For example, on a 120 Hz
+    display 120, 60, 40, 30, 24 and 20 are exact, 25 gives 30 update requests
+    per second, and 48 and 50 give 60. On a 240 Hz display 80 and 48 are exact
+    as well. Rates within 1% of an exact rate count as exact, so 23.976
+    (24000/1001), 29.97 and 59.94 give 24, 30 and 60. Update requests are never
+    delivered faster than the display refreshes.
+
+    The system may still deliver fewer update requests, for instance in low
+    power mode, while the window is covered, or when rendering a frame takes
+    longer than the frame interval.
+
+    Setting this property does not request an update. It paces the update
+    requests the window makes with requestUpdate(), including those made by
+    QPaintDeviceWindow::update() and Qt Quick. Each window is paced on its own,
+    so windows on the same screen can prefer different rates, and one window's
+    preference doesn't slow down another window. When windows on the same
+    screen prefer rates that the display can't show together at a lower
+    refresh rate, such as 24 and 30 on a 120 Hz display, the display keeps
+    refreshing at its full rate.
+
+    Qt Quick advances animations by the interval between the window's frames,
+    so that they run at the same speed at any rate. Animator types, which run
+    on the render thread, can run slower for about a tenth of a second when
+    they start on displays that switch to a lower refresh rate for the
+    preferred rate, such as ProMotion displays. With more than one visible Qt
+    Quick window, animations are advanced by a timer at the display's refresh
+    rate, while rendering is still paced.
+
+    The default value, 0, means no preference: update requests are delivered at
+    the platform's default rate, which is the refresh rate of the display on
+    macOS and iOS, and every few milliseconds on platforms that deliver update
+    requests with a timer.
+    Setting a negative or non-finite value prints a warning and sets the
+    property to 0.
+
+    For Qt Widgets, set this property on the window of the top-level widget,
+    see QWidget::windowHandle(), which exists once the widget has been shown or
+    QWidget::winId() has been called. The value is kept when the widget's
+    window is recreated. On macOS and iOS, with vertical sync enabled, updates
+    scheduled with QWidget::update() in that window are then paced as well,
+    including the content of QOpenGLWidget and QRhiWidget. QWidget::repaint()
+    is not paced, except that for windows with such widgets it may be deferred
+    to the next frame, like without a preferred frame rate.
+
+    \note Pacing to the display refresh is currently implemented on macOS and
+    iOS. On platforms that deliver update requests with a timer, such as X11,
+    Android, eglfs and offscreen, the preferred frame rate is the minimum
+    interval between update requests, which isn't aligned to the display
+    refresh. Other platforms, such as Wayland, Windows with Direct3D vertical
+    sync, and WebAssembly, currently ignore it.
+
+    \sa requestUpdate(), QScreen::refreshRate()
+*/
+void QWindow::setPreferredFrameRate(qreal framesPerSecond)
+{
+    Q_D(QWindow);
+    if (!qIsFinite(framesPerSecond) || framesPerSecond < 0) {
+        qWarning("QWindow::setPreferredFrameRate: Ignoring invalid frame rate %g, "
+                 "using 0 (no preference)", framesPerSecond);
+        framesPerSecond = 0;
+    }
+    if (framesPerSecond == d->preferredFrameRate)
+        return;
+    d->preferredFrameRate = framesPerSecond;
+    if (d->platformWindow)
+        d->platformWindow->setPreferredFrameRate(framesPerSecond);
+    emit preferredFrameRateChanged(framesPerSecond);
+}
+
+qreal QWindow::preferredFrameRate() const
+{
+    Q_D(const QWindow);
+    return d->preferredFrameRate;
+}
+
+void QWindow::resetPreferredFrameRate()
+{
+    setPreferredFrameRate(0);
+}
+
+/*!
     Sets the mask of the window.
 
     The mask is a hint to the windowing system that the application does not
@@ -2898,6 +2995,9 @@ void QWindowPrivate::maybeSynthesizeContextMenuEvent(QMouseEvent *event)
     has completed. Calling this function multiple times will result in a single
     event being delivered to the window.
 
+    The rate at which update requests are delivered can be limited with
+    preferredFrameRate, for example to match the frame rate of video content.
+
     Subclasses of QWindow should reimplement event(), intercept the event and
     call the application's rendering code, then call the base class
     implementation.
@@ -2909,6 +3009,7 @@ void QWindowPrivate::maybeSynthesizeContextMenuEvent(QMouseEvent *event)
     therefore break the delivery of the update events.
 
     \since 5.5
+    \sa preferredFrameRate
 */
 void QWindow::requestUpdate()
 {
