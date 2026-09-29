@@ -26,7 +26,7 @@ start=$(git rev-list --reverse --first-parent $BASE..HEAD | sed -n "${done}p"); 
 echo "already committed: $done; continuing from $(git log -1 --format='%h %s' $start)"
 git reset -q $start || exit 1
 
-for i in $(seq $((done + 1)) 6); do
+for (( i = done + 1; i <= 6; ++i )); do   # not seq: BSD seq counts down from 7 to 6
   git read-tree ${TREES[$i]} || exit 1            # stage exactly the tested state
   [[ $(git write-tree) == ${TREES[$i]} ]] || { echo "STOPPED: could not stage state $i"; exit 1; }
   commit_signed ${MSGS[$i]} || { git read-tree HEAD; exit 1; }
