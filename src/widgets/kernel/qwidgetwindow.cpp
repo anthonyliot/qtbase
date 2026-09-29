@@ -384,6 +384,21 @@ bool QWidgetWindow::event(QEvent *event)
         break;
 
     case QEvent::UpdateRequest:
+        if (m_widget->isWindow()) {
+            auto *repaintManager = QWidgetPrivate::get(m_widget)->maybeRepaintManager();
+            // Paced update request made by the repaint manager. Take the flag before
+            // syncing, so that an update() during the sync (e.g. from a QOpenGLWidget's
+            // frameSwapped() signal) schedules the next frame the same way.
+            if (repaintManager && repaintManager->takeWindowUpdateRequest()) {
+                // Sync like for a posted update request, through QWidget::event(), so
+                // that event filters and overrides see it. Nothing to do if an expose
+                // event or repaint() synced already. An external requestUpdate() on the
+                // window coalesced with ours syncs the dirty regions like ours.
+                if (repaintManager->isUpdateRequestSent() || repaintManager->isDirty())
+                    QCoreApplication::forwardEvent(m_widget, event);
+                return true;
+            }
+        }
         // This is not the same as an UpdateRequest for a QWidget. That just
         // syncs the backing store while here we also must mark as dirty.
         m_widget->repaint();

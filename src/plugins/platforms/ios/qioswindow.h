@@ -8,6 +8,8 @@
 #include <qpa/qplatformwindow.h>
 #include <qpa/qwindowsysteminterface.h>
 
+#include <QtGui/private/qappleframerate_p.h>
+
 #import <UIKit/UIKit.h>
 
 @class QUIView;
@@ -52,6 +54,9 @@ public:
     QSurfaceFormat format() const override;
 
     void requestUpdate() override;
+    void setPreferredFrameRate(qreal framesPerSecond) override;
+    bool pacesUpdateRequests() const override;
+    QAppleFrameRatePreference &frameRatePreference() { return m_frameRatePreference; }
 
     void setMask(const QRegion &region) override;
 
@@ -69,6 +74,7 @@ private:
     UIView *m_view;
 
     QRect m_normalGeometry;
+    QAppleFrameRatePreference m_frameRatePreference;
 
     void raiseOrLower(bool raise);
     int windowLevel() const;

@@ -1397,6 +1397,8 @@ void QWidgetPrivate::createTLSysExtra()
             extra->topextra->window->setMaximumSize(QSize(extra->maxw, extra->maxh));
         if (extra->topextra->opacity != 255 && q->isWindow())
             extra->topextra->window->setOpacity(qreal(extra->topextra->opacity) / qreal(255));
+        if (extra->topextra->preferredFrameRate > 0 && q->isWindow())
+            extra->topextra->window->setPreferredFrameRate(extra->topextra->preferredFrameRate);
 
 #if QT_CONFIG(tooltip)
         const bool isTipLabel = qobject_cast<const QTipLabel *>(q) != nullptr;
@@ -1606,6 +1608,7 @@ void QWidgetPrivate::createTLExtra()
         x->normalGeometry = QRect(0,0,-1,-1);
         x->savedFlags = { };
         x->opacity = 255;
+        x->preferredFrameRate = 0;
         x->posIncludesFrame = 0;
         x->sizeAdjusted = false;
         x->embedded = 0;
@@ -1690,6 +1693,11 @@ void QWidgetPrivate::deleteTLSysExtra()
     if (extra && extra->topextra) {
         if (extra->hasWindowContainer)
             QWindowContainer::toplevelAboutToBeDestroyed(q);
+
+        // Keep the preferred frame rate for when the window is recreated, e.g.
+        // when a render-to-texture widget is added to a shown top-level
+        if (extra->topextra->window)
+            extra->topextra->preferredFrameRate = extra->topextra->window->preferredFrameRate();
 
         delete extra->topextra->window;
         extra->topextra->window = nullptr;

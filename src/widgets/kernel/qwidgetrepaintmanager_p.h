@@ -70,6 +70,13 @@ public:
 
     bool bltRect(const QRect &rect, int dx, int dy, QWidget *widget);
 
+    // Whether updates of the top-level go through QWindow::requestUpdate(), so
+    // that they are paced to the display and the window's preferred frame rate.
+    bool usesPacedUpdateRequests() const;
+    // Whether the window's pending update request was made by us
+    bool takeWindowUpdateRequest() { return std::exchange(windowUpdateRequested, false); }
+    bool isUpdateRequestSent() const { return updateRequestSent; }
+
 private:
     void updateLists(QWidget *widget);
 
@@ -106,6 +113,7 @@ private:
     QPlatformTextureListWatcher *textureListWatcher = nullptr;
 
     bool updateRequestSent = false;
+    bool windowUpdateRequested = false;
 
     QElapsedTimer perfTime;
     int perfFrames = 0;

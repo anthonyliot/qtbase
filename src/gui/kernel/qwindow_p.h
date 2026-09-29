@@ -143,6 +143,7 @@ public:
     bool resizeAutomatic = true;
     Qt::ScreenOrientation contentOrientation = Qt::PrimaryOrientation;
     qreal opacity= 1;
+    qreal preferredFrameRate = 0;
     QRegion mask;
 
     QSize minimumSize = {0, 0};
@@ -154,6 +155,12 @@ public:
     bool blockedByModalWindow = false;
 
     bool updateRequestPending = false;
+    // The expected interval in seconds between consecutive update requests,
+    // for platforms that pace them (e.g. to the display refresh and the
+    // window's preferred frame rate). Only valid during update request
+    // delivery, and 0 otherwise or if unknown. Allows Qt Quick to advance
+    // animations by the actual frame time.
+    double updateRequestInterval = 0;
     bool transientParentPropertySet = false;
 
     QPointer<QWindow> transientParent;

@@ -437,6 +437,24 @@ void QIOSWindow::requestUpdate()
     static_cast<QIOSScreen *>(screen())->setUpdatesPaused(false);
 }
 
+void QIOSWindow::setPreferredFrameRate(qreal framesPerSecond)
+{
+    // Apply the change to a pending update request right away
+    if (hasPendingUpdateRequest())
+        static_cast<QIOSScreen *>(screen())->setUpdatesPaused(false);
+    QPlatformWindow::setPreferredFrameRate(framesPerSecond);
+}
+
+bool QIOSWindow::pacesUpdateRequests() const
+{
+    // Only for windows that explicitly asked for a frame rate, and not where
+    // there's no display link (visionOS), and update requests aren't delivered
+    const auto *platformScreen = static_cast<QIOSScreen *>(screen());
+    return platformScreen && platformScreen->hasDisplayLink()
+            && (window()->preferredFrameRate() > 0
+                || window()->property(QAppleFrameRatePreference::propertyName).isValid());
+}
+
 void QIOSWindow::setMask(const QRegion &region)
 {
     if (!region.isEmpty()) {

@@ -232,7 +232,7 @@ void Window::render()
     }
 
 // Always request the next frame via requestUpdate(). On some platforms this is backed
-// by a platform-specific solution, e.g. CVDisplayLink on macOS, which is potentially
+// by a platform-specific solution, e.g. CADisplayLink on macOS, which is potentially
 // more efficient than a timer, queued metacalls, etc.
 //
 // However, the rendering behavior is identical no matter how the next round of

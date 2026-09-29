@@ -10,15 +10,21 @@
 #include <qpa/qplatformintegration.h>
 #include <QtCore/private/qcore_mac_p.h>
 
+#include <chrono>
+#include <memory>
+
 #include <CoreGraphics/CoreGraphics.h>
-#include <CoreVideo/CoreVideo.h>
 
 #import <AppKit/NSScreen.h>
 #import <Foundation/NSArray.h>
 
+Q_FORWARD_DECLARE_OBJC_CLASS(CADisplayLink);
+
 QT_BEGIN_NAMESPACE
 
 class QCocoaIntegration;
+class QTimer;
+struct QAppleFrameRateRange;
 
 class QCocoaScreen : public QPlatformScreen, public QNativeInterface::QCocoaScreen
 {
@@ -52,7 +58,7 @@ public:
     bool isOnline() const;
 
     bool requestUpdate();
-    void deliverUpdateRequests();
+    void deliverUpdateRequests(double targetTimestamp, double frameInterval);
 
     static QCocoaScreen *primaryScreen();
     static QCocoaScreen *get(NSScreen *nsScreen);
@@ -96,12 +102,22 @@ private:
     qreal m_devicePixelRatio = 0;
     qreal m_rotation = 0;
 
-    CVDisplayLinkRef m_displayLink = nullptr;
-    dispatch_source_t m_displayLinkSource = nullptr;
-    QAtomicInt m_pendingUpdateRequests;
-    QAtomicInt m_pendingDisplayLinkUpdates;
+    CADisplayLink *m_displayLink = nullptr;
+    bool m_deliveringUpdateRequests = false;
+    bool m_nestedEventLoopInDelivery = false;
+    bool m_displayLinkStalled = false;
+    int m_displayLinkRecoveries = 0;
+    std::unique_ptr<QTimer> m_displayLinkWatchdog;
+    void startDisplayLinkWatchdog(std::chrono::milliseconds timeout);
+    std::chrono::milliseconds displayLinkStallTimeout(bool maximumBackOff = false) const;
+    void displayLinkWatchdogTimeout();
+    void fallBackToTimerBasedUpdateRequests();
 
-    void maybeStopDisplayLink();
+    bool hasPendingUpdateRequests() const;
+    void maybePauseDisplayLink();
+    bool updateDisplayLinkFrameRate();
+    void setDisplayLinkFrameRate(const QAppleFrameRateRange &range);
+    void invalidateDisplayLink();
 
     friend class QCocoaIntegration;
     friend class QCocoaWindow;
