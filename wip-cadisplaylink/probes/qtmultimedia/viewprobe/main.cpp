@@ -17,10 +17,32 @@ static int count(int ms) { const int before = frames; spin(ms); return frames - 
 int main(int argc, char **argv)
 {
     QGuiApplication app(argc, argv);
+    // Declared first, as it's the video window's parent in child mode, and deletes its children
+    QWindow parent;
     QVideoWindow window;
     window.resize(320, 240);
-    window.setFlag(Qt::WindowStaysOnTopHint);
-    window.show();
+    // viewprobe <file> <seconds> <rate> full: full screen, in a space of its own, so that only
+    // the video updates the display while measuring its refresh rate. Not with
+    // WindowStaysOnTopHint: that's a panel's window level, which doesn't get a space.
+    // viewprobe <file> <seconds> <rate> child: the video window as a child of a full screen
+    // window, like QVideoWidget's, which the window server composites
+    const bool fullScreen = argc > 4 && qstrcmp(argv[4], "full") == 0;
+    const bool child = argc > 4 && qstrcmp(argv[4], "child") == 0;
+    if (fullScreen) {
+        window.showFullScreen();
+    } else if (child) {
+        parent.showFullScreen();
+        window.setParent(&parent);
+        window.setGeometry(100, 100, 960, 540);
+        window.show();
+    } else {
+        window.setFlag(Qt::WindowStaysOnTopHint);
+        window.show();
+    }
+    // viewprobe <file> <seconds> <rate>: another preference (0 for none), set before playing,
+    // which the window leaves alone. 120 on a 120 Hz display is the default range, as without one.
+    if (argc > 3)
+        window.setPreferredFrameRate(std::atof(argv[3]));
     QMediaPlayer player;
     player.setVideoOutput(&window);
     player.setLoops(QMediaPlayer::Infinite);
@@ -31,14 +53,24 @@ int main(int argc, char **argv)
     player.setSource(QUrl::fromLocalFile(QString::fromLocal8Bit(argv[1])));
     player.play();
     spin(1500);
+    if (fullScreen || child) {
+        const QWindow &top = child ? parent : window;
+        const QRect geometry = top.geometry(), screenGeometry = top.screen()->geometry();
+        std::printf("window: full screen %s, %dx%d on a %dx%d screen%s\n",
+                    top.windowStates() & Qt::WindowFullScreen ? "yes" : "no", geometry.width(),
+                    geometry.height(), screenGeometry.width(), screenGeometry.height(),
+                    child ? ", the video in a child window" : "");
+    }
     // viewprobe <file> <seconds>: just play, and print the frames, the preferred frame
-    // rate and the screen every second, e.g. while moving the window to another display
+    // rate, the screen and whether the window is exposed every second, e.g. while moving the
+    // window to another display (a window that isn't exposed requests no updates)
     if (argc > 2) {
         for (int second = 0; second < std::atoi(argv[2]); ++second) {
             const int frames = count(1000);
-            std::printf("%3d s: %d frames, preferredFrameRate %.3f, screen %s (%.3f Hz)\n", second,
-                        frames, window.preferredFrameRate(),
-                        qPrintable(window.screen()->name()), window.screen()->refreshRate());
+            std::printf("%3d s: %d frames, preferredFrameRate %.3f, screen %s (%.3f Hz), %s\n",
+                        second, frames, window.preferredFrameRate(),
+                        qPrintable(window.screen()->name()), window.screen()->refreshRate(),
+                        window.isExposed() ? "exposed" : "NOT EXPOSED");
             std::fflush(stdout);
         }
         return 0;

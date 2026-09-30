@@ -1,6 +1,6 @@
-WIP: Point qtbase and qtmultimedia at the reviewed CADisplayLink work
+WIP: Point qtbase and qtmultimedia at the measured M5
 
-qtmultimedia: the reviewed series (leak fix, common run loop modes,
-CVDisplayLink removal, stream frame rate, QVideoWindow preferred rate
-on variable refresh rate displays, per-screen decode clock). qtbase:
-its PR documents.
+qtmultimedia: the reviewed series, with M5 (QVideoWindow preferred
+rate on variable refresh rate displays) revised after the ProMotion
+measurement, and M6 on top of it. qtbase: its PR documents, the
+measurement tools and the release build script.

@@ -4,7 +4,7 @@
 |---|---|
 | Repo, branch | qtmultimedia `wip/cadisplaylink` |
 | Files | `src/multimedia/platform/qplatformvideosink_p.h`, `src/multimedia/video/qvideowindow.cpp`, `src/multimediaquick/qquickvideooutput.cpp`, `src/plugins/multimedia/darwin/avfvideosink.mm`, `avfvideosink_p.h`, `mediaplayer/avfdisplaylink.mm`, `avfdisplaylink_p.h`, `avfvideorenderercontrol.mm`, `avfvideorenderercontrol_p.h`, `tests/auto/integration/qvideoframebackend/tst_qvideoframebackend.cpp` |
-| Tree | S6 `f4801ada7da2`, the final tree (`pr/qtmultimedia-series/trees.txt`) |
+| Tree | S6 `395ad6fdce8e`, the final tree (`pr/qtmultimedia-series/trees.txt`) |
 | Change-Id | `Ie93c9ad86840e1f391993bdd6c1ebb02a7d79c92` |
 | From | the user's question about `NSScreen.mainScreen` with several displays; review round 6 R6-2, R6-4, R6-8, R6-10; round 7 R7-5, R7-7, R7-8 |
 

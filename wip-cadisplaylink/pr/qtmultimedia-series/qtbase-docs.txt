@@ -1,7 +1,12 @@
-WIP: Record the qtmultimedia series and its review rounds
+WIP: Record the ProMotion measurement and review rounds 13 and 14
 
-The per-commit documents of the six qtmultimedia commits (series/M1 to
-M6), the qtmultimedia sections of README and TESTING, the review rounds
-with the author's responses, the series itself (messages, tested trees,
-the commit and verification scripts, pr/qtmultimedia-series/) and the
-probes (probes/qtmultimedia/).
+README steps 4 and 5 ran on the built-in ProMotion panel: TESTING's
+"ProMotion measurement" (the panel's rate, the cadence of the window's
+updates and of its frames on screen, and the latency, with M5's
+preference against the default range), and "Round 13 changes". M5's
+commit message, the M5 document and README say what the valid runs
+show; R6-6 stays open. The measurement tools (probes/qtmultimedia/
+promotion/) and the viewprobe's full screen and child window modes.
+Review rounds 13 and 14 and the responses, the new series trees and
+finish.sh's lease for the fork's round 12 head. release-build.sh
+builds and installs a release Qt with this work (not part of the PR).

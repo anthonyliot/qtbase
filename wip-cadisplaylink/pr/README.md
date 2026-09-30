@@ -78,7 +78,7 @@ see [TESTING.md](TESTING.md). Documents: [series/](series/).
 | [D1](series/D1-animation-interval.md) | `7c4be21eb2` Advance vsync based animations by the window's frame interval | 01-04, 06, the Animator test fixes |
 | [D2](series/D2-qml-doc-tests.md) | `d8bc4071be` Document Window.preferredFrameRate, and test it from QML | 05, R1-6/R1-10 fixes |
 
-### qtmultimedia (review rounds 4 to 12)
+### qtmultimedia (review rounds 4 to 14)
 
 The qtmultimedia branch is itself the series (no WIP commits): six commits on `635067497`, each
 built and tested at its own state (TESTING.md, "Series states"). Their trees are recorded in
@@ -94,15 +94,17 @@ tested one; `qtmultimedia-series/finish.sh` does the whole sequence. The probes 
 | [M2](series/M2-common-run-loop-modes.md) | darwin: Keep polling for video frames while menus and dialogs are open | R7-3 (pre-existing on macOS 15+ and iOS) |
 | [M3](series/M3-drop-cvdisplaylink.md) | darwin: Stop using the deprecated CVDisplayLink in AVFDisplayLink | R1-10 (was `2152cdbd8`) |
 | [M4](series/M4-stream-frame-rate.md) | Report the stream frame rate of played video frames | FFmpeg and AVFoundation, R7-4 test |
-| [M5](series/M5-qvideowindow-preferred-rate.md) | QVideoWindow: Let the display refresh at the video's frame rate | R6-1, R6-5, R7-1, R7-2, R8-1, R8-2, R8-4, R8-5, R9-1 to R9-3, R10-1, R10-4, R11-1, R11-2, R11-5 |
+| [M5](series/M5-qvideowindow-preferred-rate.md) | QVideoWindow: Show frames evenly on variable refresh rate displays | R6-1, R6-5, R7-1, R7-2, R8-1, R8-2, R8-4, R8-5, R9-1 to R9-3, R10-1, R10-4, R11-1, R11-2, R11-5, R12-3, R12-4, the ProMotion measurement |
 | [M6](series/M6-per-screen-decode-clock.md) | darwin: Poll for video frames in sync with the display the video is on | R6-2, R6-4, R6-7, R6-8, R6-10, R7-5, R7-7 |
 
 In short: on a macOS display with a variable refresh rate (ProMotion, Adaptive-Sync), a
 `QVideoWindow` (and so `QVideoWidget`) asks, while a media player plays, for the rate its frames
 arrive at (the stream's rate times the playback rate), when the display shows it with an even
-cadence (24 fps on 120 Hz, 30 fps on 60, 120 and 240 Hz, ...), so that the display can refresh at
-that rate; the qtbase changes turn it into a display rate per screen, and it's reset once it no
-longer applies. Fixed refresh rate displays, iOS, paused players and cameras get none. The
+cadence (24 fps on 120 Hz, 30 fps on 60, 120 and 240 Hz, ...), so that the window is updated at that
+rate and frames aren't shown a refresh early or late depending on when they arrive (TESTING.md,
+"ProMotion measurement"; with FFmpeg the panel refreshes at the video's rate anyway). The qtbase
+changes turn it into a display rate per screen, and it's reset once it no longer applies. Fixed
+refresh rate displays, iOS, paused players and cameras get none. The
 AVFoundation backend's decode clock follows the display the video is shown on, and keeps running in
 menus and modal sessions. QML `VideoOutput` sets no preference (R6-9): its window is the whole
 scene's.
@@ -188,17 +190,23 @@ be decided before upstreaming.
 * Done: the qtbase and qtdeclarative series (`wip/cadisplaylink-gerrit` in `qt5-series/`) are
   committed and signed (`%G?` G for all 11), with exactly the tested trees (checked again on
   2026-09-29 against the recorded lists).
-* Done: the qtmultimedia series is committed and signed on `wip/cadisplaylink`, `f0c358d29` (M1)
-  to `0e21dc1b3` (M6), each commit checked against its tested tree by `commit-series.sh`, and pushed
-  to the fork on 2026-09-29 with the qtbase documents and the qt5 pointers. Qt's sanity bot hints
-  that M6's test uses `qWait()` (`framesWithin()` waits a fixed time on purpose, to count frames).
+* Done: the qtmultimedia series is committed and signed on `wip/cadisplaylink`, `f0c358d29` (M1) to
+  `aae82cabd` (M4) as in round 12, and M5 and M6 again after review round 14's approval
+  (`44cf3943d`, `89bf0ba03`, from `trees.txt` by `commit-series.sh`), pushed to the fork on
+  2026-09-30 with these documents and the qt5 pointers.
+  Qt's sanity bot hints that M6's test uses `qWait()` (`framesWithin()` waits a fixed time on
+  purpose, to count frames).
 * qtmultimedia, the author's decisions: a QTBUG and `Pick-to:` for M1 and M2, which fix released
   versions (R7-8).
-* qtmultimedia, M5's two round 12 nits, when M5 is revisited after the measurement: a test for the
-  window forgetting its own value (R12-3), and "internal" in the QVideoWidget documentation.
-* qtmultimedia, a session with the MacBook's built-in ProMotion panel (R9-4, R10-2; steps 1 to 3
-  done on 2026-09-29, TESTING.md "ProMotion panel"), which is also
-  the two-screen setup with the G95SC. `B=~/Desktop/bitbucket`,
+* Done: M5's two round 12 nits, after the measurement: a test for the window forgetting its own
+  value (R12-3), and "internal" in the QVideoWidget documentation.
+* qtmultimedia, a session with the MacBook's built-in ProMotion panel (R9-4, R10-2). Steps 1 to 5
+  done on 2026-09-29 (TESTING.md, "ProMotion panel" and "ProMotion measurement"). With FFmpeg the
+  panel follows the content without M5 too, so M5's case is the cadence: it keeps FFmpeg's window
+  updates on the grid (98% to 100% against 79% to 94%), at the measured latency; M5 stays (the
+  user's decision). With AVFoundation, the one valid default run had the panel faster for 4.5 s, so
+  R6-6 stays open. Steps 6 and 7 need the G95SC as a second display and don't apply to this setup
+  (the built-in panel only). `B=~/Desktop/bitbucket`,
   `P=$B/qt5/qtbase/wip-cadisplaylink/probes/qtmultimedia`:
   0. Open the lid, and make the built-in display the main display (System Settings > Displays):
      test windows open on the main display.
@@ -213,16 +221,17 @@ be decided before upstreaming.
      -DCMAKE_PREFIX_PATH=$B/qt5-build-nofw && cmake --build /tmp/vp`), `QT_MEDIA_BACKEND=ffmpeg
      /tmp/vp/viewprobe /tmp/24fps.mp4 120`, which prints the frames, the preferred frame rate and
      the screen every second: 24 frames, preferredFrameRate 24.000 on the panel.
-  4. The panel's refresh rate meanwhile: Instruments, "Animation Hitches" template, the Display
-     track (refresh every 41.7 ms if the panel follows). Not with a probe of its own CADisplayLink:
-     that asks for its own rate. Again with `QT_MEDIA_BACKEND=darwin`: whether AVFDisplayLink's
-     decode link keeps the panel at 120 Hz (R6-6), in which case M5 costs latency for nothing
-     there; if the panel doesn't drop with FFmpeg either, reconsider M5 (the round 10 approval's
-     condition).
-  5. The latency the 24 Hz grid adds (R8-1), in the same trace: from the video window's commit to
-     the refresh that shows it, for `/tmp/24fps.mp4` (paced at 24) and for a 25 fps file (no
-     preference, the full rate), e.g. the same ffmpeg line with `rate=25`, or the tests'
-     `colors.mp4`.
+  4. The panel's refresh rate meanwhile, and the frames' time on screen: `$P/promotion/matrix.sh`
+     (`measure.sh`: the Display and Core Animation Commits instruments, not the Animation Hitches
+     template, whose kernel
+     trace disturbed the measurement; the probe full screen, or `child` for QVideoWidget's layout;
+     M5's preference against the default range, both backends), then `analyze.py` and
+     `cadence.py`. Done for FFmpeg: the panel drops without M5 too. For AVFoundation one valid run
+     per arm isn't enough (R6-6 open). `analyze.py` marks runs whose window wasn't shown; a 30 fps
+     clip (M5: 30 on 120 Hz) would tell a panel following the video (30 Hz) from an idle one
+     (24 Hz).
+  5. The latency the 24 Hz grid adds (R8-1), in the same runs: from the update request to its
+     delivery, from the probe's display link log (`qtlog.py`), and from commit to display. Done.
   6. The move R9-1 is about: while step 3 plays, drag the window to the G95SC and back:
      preferredFrameRate goes to 0.000 on the G95SC (fixed rate) and back to 24.000 on the panel.
   7. M6 (R7-5): the same with `QT_MEDIA_BACKEND=darwin`, the window on the G95SC (not the main
@@ -285,12 +294,16 @@ Test results: [TESTING.md](TESTING.md).
     is shown on the grid of that rate: a frame may wait up to one frame interval, a frame near a
     tick may slip to the next, and 23.976 and 29.97 fps show about one frame in 1000 twice as long
     (R8-1, R9-3, R10-1). Content faster than an exact rate gets none, so on a display just below a
-    whole rate (59.94 Hz) whole-rate content (30 fps) does too (R11-1). With the AVFoundation
-    backend its decode display link may keep the panel at its full rate anyway (R6-6), so there the
-    preference may only cost that latency; FFmpeg, the default backend, has no such link.
+    whole rate (59.94 Hz) whole-rate content (30 fps) does too (R11-1). Measured on the ProMotion
+    panel, the wait for the grid is a median of 5 to 33 ms with FFmpeg, against 3 to 6 without,
+    and 17 to 33 against 9 ms with AVFoundation; a frame that misses its tick holds the previous one
+    for a whole interval (7.6% of the updates in one run under a heavy load, against 0.3%).
   * Variable frame rate video asks for its average rate (R6-5).
-  * The AVFoundation decode clock runs at its screen's maximum rate, which may keep a ProMotion
-    panel above the video's rate (R6-6, follow-up; not measurable on a fixed-rate display).
+  * The AVFoundation decode clock runs at its screen's maximum rate, and the application commits
+    about 120 times a second while it plays. Whether that keeps a ProMotion panel above the video's
+    rate is open (R6-6, a follow-up): the one valid default run had the panel at 60 to 120 Hz for
+    4.5 s with only the video on screen, and M5's run at 24 Hz (TESTING.md, "ProMotion
+    measurement").
   * QML `VideoOutput` sets no preference; the application sets `Window.preferredFrameRate` (R6-9).
   * No automated test for the decode clock following the window's screen (one display here).
 

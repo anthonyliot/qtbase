@@ -18,7 +18,10 @@ binaries.
 ### Suites on the final state
 
 Round 11 final state S6 `f4801ada7da2`, with `pr/qtmultimedia-series/verify/run-suites.sh` (logs
-`/tmp/qtmm-results-s11/`, every test binary checked to be newer than its source):
+`/tmp/qtmm-results-s11/`, every test binary checked to be newer than its source). The final trees
+are now S5 `d7b28d110a2f` and S6 `395ad6fdce8e` (rounds 12 and 13): the same library code, as only
+comments and the QVideoWidget documentation changed since, and the unit test gained R12-3's step. So
+after round 11 only the suites M5 touches were run again ("Round 13 changes"). The round 11 runs:
 
 | Suite | darwin | ffmpeg |
 |---|---|---|
@@ -145,8 +148,165 @@ README checklist steps 1 to 3, logs `/tmp/mm/promotion/`:
    | 24 fps | AVFoundation | 24 (25 once) | 24.000 |
    | 25 fps | FFmpeg | 25 (26 once) | 0.000 (no exact rate at 120 Hz) |
 
-Not run yet: steps 4 and 5 (the panel's rate and the latency, with Instruments), 6 and 7 (the
-G95SC wasn't connected).
+Steps 4 and 5 (the panel's rate and the latency, with Instruments): the next section. Steps 6 and
+7 need the G95SC as a second display, which this setup doesn't have.
+
+### ProMotion measurement, 2026-09-29 (README steps 4 and 5)
+
+The built-in 120 Hz panel, the only display. What M5's preference does to the panel's refresh rate,
+to the cadence of the window's updates and of its frames on screen, and to the latency, as an A/B
+in the same build: the viewprobe (`probes/qtmultimedia/viewprobe`) plays a 24 fps clip (`testsrc2`,
+1280x720, H.264, 300 s) with M5's preference (24), or first sets another one, 120, which M5 leaves
+alone and which on a 120 Hz display is the default range, as without M5 (the default arms' logs
+never leave the default range). Instruments records the display, and the probe logs its display
+link events (`qt.qpa.screen.updates`) with wall-clock times. Tools:
+`probes/qtmultimedia/promotion/`. Evidence, not in git:
+`~/Desktop/bitbucket/promotion-evidence-2026-09-29/` (exported tables, tables of contents, probe
+outputs, Qt logs, xctrace logs, the light traces, and round 13's verification logs).
+
+| runs | recording | layout |
+|---|---|---|
+| `ffmpeg-*`, `darwin-*` | Animation Hitches template (a kernel trace), 10 s; no Qt log | a 320x240 window over the others |
+| `l3-*` | Display and Core Animation Commits instruments, 10 s | full screen |
+| `c5-*`, `c4-*` | Display instrument, 8 s | a child window of a full screen window (QVideoWidget's layout) |
+| `lite-ffmpeg-25-1` | Display and Core Animation Commits, 10 s | over the others |
+
+`measure.sh`'s `light` recording is the `l3` one; `matrix.sh` takes the recording's length.
+
+**Conditions.** Not quiet:
+
+* other jobs kept the load average between 20 and 370;
+* other windows updated on the panel in some runs (a WebKit development build, Webex, Control
+  Center);
+* the display mode was switched to fixed 60 and 48 Hz during several runs (`QScreen::refreshRate()`
+  in the probe's lines): the `l2-*` runs (60 Hz all or half of the time), `l3-darwin-24-m5-2` (60 Hz
+  for 10 s, 48 Hz for 8 s), `l3-ffmpeg-25-1` (60 Hz for 15 s). `analyze.py` marks such runs.
+
+When the mode changed, M5 reset the preference to 0 within the same second, and set 24 again back
+in ProMotion (`l3-darwin-24-m5-2.qtlog.txt`, 14:27:35.290 and 14:27:45.810): R9-1's reset on real
+hardware.
+
+**Runs left out:**
+
+* Three full screen arms (`l3-ffmpeg-24-m5-1`, `l3-darwin-24-m5-1`, `l3-darwin-24-dflt-1`) weren't
+  shown. The probe's display link log stops 1.4 to 2.8 s after launch, before the recording, so the
+  window wasn't exposed (most likely its full screen space wasn't the one on the display). They
+  recorded an idle panel, which sits at its slowest rate, 24 Hz, the same as for 24 fps video. The
+  first version of this section counted them (review round 13, R13-1). `analyze.py` now uses only
+  the Qt log inside the recording and marks such runs NOT SHOWN.
+* The runs with Webex (`c4-*`), except for the heavy load note in 2.
+* The recordings that hung (`c5-ffmpeg-24-dflt-1`, `-2`): only their Qt logs are used, over the
+  whole run.
+
+1. **The panel's rate**, in segments with only the probe on screen (time at each refresh interval):
+
+   | run | segment | 41.7 ms (24 Hz) | 16.7 ms | 8.3 ms |
+   |---|---|---|---|---|
+   | `l3-ffmpeg-24-dflt-1`, default | the recording (7 WebKit surfaces) | 92.9% | | 1.1% |
+   | `l3-ffmpeg-24-dflt-2`, default | 0 to 5 s | 93% | 3% | 1% |
+   | `l3-ffmpeg-24-m5-2`, M5 | 0 to 2.5 s | 100% | | |
+   | `l3-darwin-24-dflt-2`, default | 0 to 4.5 s | 0% | 55% | 45% |
+   | `l3-darwin-24-dflt-2`, default | 7 to 11 s | 79% | 8% | 6% |
+   | `l3-darwin-24-m5-2`, M5, back in ProMotion | 6 to 8 s, 8 to 11 s | 92%, 100% | 4%, 0% | 0% |
+
+   In the other segments another surface updated at 120 Hz and the panel followed it, in both arms.
+   So with FFmpeg the panel refreshes at the video's rate most of the time without M5. With
+   AVFoundation, the one default run had the panel at 60 to 120 Hz for 4.5 s with only the probe on
+   screen, and the M5 run at 24 Hz once back in ProMotion: the preference may lower the panel's rate
+   there, but one run each doesn't settle it, and R6-6 stays open (whether AVFoundation's decode
+   display link, which commits about 122 times a second (`analyze.py`'s commits/s, 121.5 to 122.1),
+   keeps the panel faster). While the window
+   wasn't shown, the decode link's commits alone didn't raise the panel above 24 Hz.
+2. **Cadence.** The render cadence is the share of the Qt log's display link callbacks that are
+   41.7 ms apart (each delivers one frame), inside the recording, or over the whole run where the
+   recording hung:
+
+   | backend | runs | M5 | default |
+   |---|---|---|---|
+   | FFmpeg | `l3` run 2 | 100.0% | 90.2% |
+   | FFmpeg | `c5` runs 1 and 2 | 100.0%, 98.2% | 94.0% (10 min), 81.3% (whole runs) |
+   | FFmpeg | `l3` run 1 | (not shown) | 78.9% |
+   | AVFoundation | `l3` run 2 | 99.6% (48 Hz for the recording's first 3.8 s) | 96.5% |
+
+   The display cadence is the share of intervals between the probe's consecutive frames on screen
+   that are 41.7 ms (composited runs, whose surfaces carry the probe's frame numbers), with gaps in
+   the frame numbers counted as uneven in parentheses:
+
+   | runs | backend | M5 | default |
+   |---|---|---|---|
+   | `l3` run 2, full screen, composited | FFmpeg | 96.7% (96.3%) | 88.3% (87.9%) |
+   | `c5` runs 1 and 2, child window | FFmpeg | 95.9%, 91.7% | (recordings hung) |
+   | `l3` run 2 | AVFoundation | 96.1% (the first 3.8 s at 48 Hz, without a preference) | 90.5% |
+   | Animation Hitches | FFmpeg | 93.5% (90.2%) | 24.4% (24.2%) |
+   | Animation Hitches | AVFoundation | 92.4% | 91.1% (90.7%) |
+
+   With the preference, the window's updates are on the 24 Hz grid (98% to 100%). Without it,
+   FFmpeg's updates hop a refresh in stretches (bins of a few seconds at 58% to 80% in every default
+   run): 79% to 94% over the runs. On screen, the one undisturbed pair gives 96.7% against 88.3%;
+   the difference lies in the 2.5 s when another surface kept the display at 120 Hz (outside them,
+   98.3% to 100% against 96.6% to 96.8%). The display adds a few percent of uneven intervals in both
+   arms (`c5` run 2: render 98.2%, display 91.7%, with only the probe on screen). The Animation
+   Hitches pair's 24.4%, a strict 33/50 ms alternation, was recorded at the same system load as the
+   88.3% run: what differed was the kernel trace, and its runs also have gaps of up to 4 s in the
+   probe's frames that no Qt log explains. Under a heavy load (`c4`: Webex, load average 300 to 385,
+   the arms not simultaneous), the M5 arm's last 28 s had 64.4% on the grid and 7.6% of 83 ms holds,
+   frames that missed their tick, against 77.6% and 0.3% without: the grid doesn't help against
+   large variations, and a slip holds the previous frame for a whole interval.
+3. **Latency** (step 5): from the update request (the link is resumed for it) to its delivery,
+   inside the recording, medians:
+   * FFmpeg with M5: 5 ms (`l3` run 2), 33 and 19 ms (`c5` runs 1 and 2), depending on where the
+     frames fall on the grid (it's stable within a run). Without M5: 6 and 4 ms (`l3` runs 1 and
+     2), 4 and 3 ms (`c5` runs 1 and 2, whole runs).
+   * AVFoundation: 17 to 33 ms with M5 (`l3` run 2, its periods at 120 Hz with the preference), 9 ms
+     without.
+   * From commit to display: about 24 ms or about 7 ms in either arm, the 24 ms in runs with another
+     surface's burst. `c5` run 2, with M5's preference and only the probe on screen: 7.1 ms. So M5
+     adds the wait for the grid, and nothing after it.
+   * No undisturbed M5 run had frames arriving just before a tick. A slip's cost was measured on the
+     render side only, in `c4`'s Qt log after its recording (its window wasn't shown while
+     recording), never on screen.
+
+The decision (the user's, after this measurement): M5 stays, for FFmpeg's cadence, with its commit
+message, comment and QVideoWidget documentation saying what it does and what it costs. README steps
+6 and 7 need a second, fixed refresh rate display and don't apply to this setup.
+
+### Round 13 changes
+
+M5 only, after the measurement (TESTING above, "ProMotion measurement"): R12-3's test step (another
+component sets exactly the window's former value while paused, and it stays) and the comment on the
+else branch; "the internal window" in the QVideoWidget documentation (R12-4); the comment, the
+QVideoWidget documentation and the commit message now give the measured rationale, an even
+cadence, and the measured wait. Trees: S5 `824627c8497b`, S6 `a8e69274ace7` (`trees.txt`,
+`refs/cadisplaylink/series/S5`, `S6`); M6's patch is unchanged (same `git patch-id`). Logs in the
+evidence directory (above), `logs-round13/`: `states13/`, `m5fix/` and `ffmpeg9/`.
+
+* qtmm-build first rebuilt against Homebrew's FFmpeg 9.0.1 (it had been upgraded from 8.1.1, and the
+  plugin linked the removed libraries): the precompiled header of the FFmpeg plugin had to be
+  rebuilt by hand (touch `cmake_pch.hxx`), as its dependency on the FFmpeg headers isn't tracked.
+  `tst_qvideoframebackend` 22 passed, 1 skipped on both backends; `tst_qmediaplayerbackend` on
+  FFmpeg 290 passed, 2 failed (`server.listen()` in the sandbox, as before), 19 skipped: 3 more
+  than on 2026-09-28, `swapAudioDevice_doesNotStopPlayback` in its three states, which "requires two
+  audio output devices" (the G95SC's was the second one).
+* S5 (`verify-states.sh S5`): 0 warnings in the changed files; leak probe: none of 20 players
+  leaves a display link; `tst_qvideoframebackend` 20/20 on both backends; `tst_qvideowidget` 8
+  passed, 1 skipped; `tst_qmultimediautils` 307; `tst_qvideowindow` 7;
+  `destruction_doesNotDeadlock_afterMediaPlayerCall` 80 passed (78 rows).
+* S6 (the final state, rebuilt after the restore): the same, with `tst_qvideoframebackend` 22
+  passed, 1 skipped on both backends.
+* R12-3's step broken on purpose: without the else branch, `tst_qvideowindow` fails at the new
+  comparison (`tst_qvideowindow.cpp:225`), 6 passed, 1 failed; restored, 7 passed.
+* After review round 13, R13-3 changed the QVideoWidget documentation sentence and the comment
+  (text only): trees S5 `d7b28d110a2f`, S6 `395ad6fdce8e` (M6's patch unchanged). Logs in
+  `logs-round13/states13b/` and `m5fix-b/`.
+  * S5 (`verify-states.sh S5`): 0 warnings in the changed files; the leak probe as before;
+    `tst_qvideoframebackend` 20/20 on both backends; `tst_qvideowidget` 8 passed, 1 skipped;
+    `tst_qmultimediautils` 307; `tst_qvideowindow` 7;
+    `destruction_doesNotDeadlock_afterMediaPlayerCall` 79 passed, 1 failed (`MVA_setSourceNull`: the
+    first position check took 5.1 s, over its 5 s timeout).
+  * S6, rebuilt after the restore: the same, with `tst_qvideoframebackend` 22 passed, 1 skipped on
+    both backends; `destruction_doesNotDeadlock_afterMediaPlayerCall` three times: 80, 79 + 1
+    failed (`VAM_setPosition`, the same timeout), 80, with a load average of 107 to 116. A different
+    row each time, on the timing the upstream A/B above shows failing without this series.
 
 ### Round 11 changes
 
@@ -304,13 +464,14 @@ the round 8 final state).
 
 ### Series states
 
-Each state of `pr/qtmultimedia-series/trees.txt` (round 11; S1 to S4 are the trees of round 8,
-verified then), materialized in the worktree, built (the libraries, both plugins and the tests
-below, no warnings in the changed files) and tested with `/tmp/mm/verify-states8.sh` and, for S5,
-`pr/qtmultimedia-series/verify/verify-states.sh`, which also removes the files a state doesn't have
-yet and reconfigures (logs `/tmp/mm/states8/`, `/tmp/mm/states11/`; earlier versions of S5,
-`9bb38750eba3` in round 9 and `9d6582f3ca7b` in round 10, passed the same way). The leak probe runs
-20 players with autorelease pools. The `destruction` column is QtTest's totals for
+Each state of `pr/qtmultimedia-series/trees.txt` as of round 11 (S1 to S4 are the trees of round 8,
+verified then; S5 and S6 have changed since only in comments, documentation and R12-3's test step,
+see "Suites on the final state"), materialized in the worktree, built (the libraries, both plugins
+and the tests below, no warnings in the changed files) and tested with `/tmp/mm/verify-states8.sh`
+and, for S5, `pr/qtmultimedia-series/verify/verify-states.sh`, which also removes the files a state
+doesn't have yet and reconfigures (logs `/tmp/mm/states8/`, `/tmp/mm/states11/`; earlier versions of
+S5, `9bb38750eba3` in round 9 and `9d6582f3ca7b` in round 10, passed the same way). The leak probe
+runs 20 players with autorelease pools. The `destruction` column is QtTest's totals for
 `tst_qmediaplayerbackend::destruction_doesNotDeadlock_afterMediaPlayerCall` (darwin): its 78 rows (6
 destruction orders x 13 calls) plus `initTestCase` and `cleanupTestCase`, so "80 passed" is every
 row; the failures are playback starting slower than 5 s, the known flake (upstream A/B above).
@@ -455,11 +616,14 @@ display: Qt asked for 240 / 9 = 26.67, the system delivered 30.
 ## Not run
 
 * `preferredFrameRatePerScreen` (needs two screens connected at once).
-* The stall (R1-1) on the ProMotion panel, and a CVDisplayLink A/B of it (panel not connected).
+* The stall (R1-1) on the ProMotion panel, and a CVDisplayLink A/B of it: the panel is connected
+  now, but the A/B needs the CVDisplayLink baseline plugin and a quiet panel (README, "Before
+  sending to Gerrit").
 * A display ID change (R1-4): reasoned, not triggered.
 * Wayland/xcb/Windows: the timer-path pacing test has only run on cocoa (it's in the allow-list).
 * Real-mouse live resize with the event tap removed.
 * qtmultimedia: an iOS build of the darwin plugin (only a syntax check of `avfdisplaylink.mm`); a
-  live resize with the AVFoundation backend (menus and modal sessions were probed); a display with a
-  variable refresh rate (none connected: M5's preference is only exercised through the autotest
-  hook); two screens for M6.
+  live resize with the AVFoundation backend (menus and modal sessions were probed); two screens for
+  M5 and M6 (README steps 6 and 7: this setup has the built-in ProMotion panel only). The
+  preference on a display with a variable refresh rate ran on the built-in panel ("ProMotion
+  panel" and "ProMotion measurement").

@@ -15,9 +15,11 @@ if git status --porcelain -- wip-cadisplaylink | grep -q .; then
   git add -- wip-cadisplaylink && commit_signed $HERE/qtbase-docs.txt || exit 1
 fi
 
-# The fork's branch is the old, pre-review history (89c28908b); replace it only if it's still that.
+# The fork's branch is the round 12 series (M6 0e21dc1b3), which round 13 replaces from M5 on;
+# replace it only if it's still that.
 if [[ $(git -C $Q/qtmultimedia ls-remote fork refs/heads/wip/cadisplaylink | cut -f1) != $(git -C $Q/qtmultimedia rev-parse wip/cadisplaylink) ]]; then
-  git -C $Q/qtmultimedia push --force-with-lease=wip/cadisplaylink:89c28908b78c3e1c74f2b3846b712939cfeb7a69 fork wip/cadisplaylink || exit 1
+  git -C $Q/qtmultimedia push --force-with-lease=wip/cadisplaylink:0e21dc1b35c1cd89236874e2ebff46c63324ffa8 \
+      fork wip/cadisplaylink || exit 1
 fi
 git -C $Q/qtbase push fork wip/cadisplaylink || exit 1
 

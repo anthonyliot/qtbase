@@ -1,32 +1,48 @@
-QVideoWindow: Let the display refresh at the video's frame rate
+QVideoWindow: Show frames evenly on variable refresh rate displays
 
-On a display with a variable refresh rate, like ProMotion, the panel
-refreshes at its maximum rate unless the windows ask for less, even
-when a video window only shows a new frame 24 times per second.
+On a display with a variable refresh rate, like ProMotion, the window
+renders a frame at the first display link callback after it arrives,
+and the frame is shown at the first refresh after that. So a frame
+arriving a little early or late is shown a refresh earlier or later,
+and 24 fps video shows some frames for 33 or 50 ms instead of 41.7.
+With the FFmpeg backend on a 120 Hz ProMotion panel, 79% to 94% of the
+window's updates were 41.7 ms apart, fewer in stretches and while
+another window updated the display at 120 Hz, against 98% to 100% with
+this change; on screen, in the one undisturbed pair, 88% of the frames
+were shown for 41.7 ms, against 97%. The AVFoundation backend's frames
+follow the display, and were about as even without it. The panel
+itself doesn't need the preference to slow down: with FFmpeg it
+refreshed at 24 Hz most of the time without it.
 
 On such displays, while a media player plays, set
 QWindow::preferredFrameRate on the video window to the rate its frames
 arrive at, the stream's frame rate times the playback rate, but only
 when the display shows that rate with an even cadence, every frame for
-the same number of refreshes, like 24 fps on a 120 Hz display. Other
-rates are paced at the next faster exact rate: 25 fps at 30 Hz would
-show every fifth frame for twice as long as the others, more unevenly
-than refreshing at the full rate, so they get no preference, as before.
-A whole multiple of the rate counts too, and rates up to 0.2% slower
-than an exact one, like 23.976 and 29.97, but not faster ones, whose
-frames would be dropped. qVideoPreferredFrameRate() computes
-it from the refresh rate of the window's screen, for every frame, and
-the preference is reset once it no longer applies, so it follows the
-window to other screens.
+the same number of refreshes, like 24 fps on a 120 Hz display. The
+window is then updated on the grid of that rate, and frames aren't
+shown a refresh early or late. Other rates are paced at the next faster
+exact rate: 25 fps at 30 Hz would show every fifth frame for twice as
+long as the others, more unevenly than refreshing at the full rate, so
+they get no preference, as before. A whole multiple of the rate counts
+too, and rates up to 0.2% slower than an exact one, like 23.976 and
+29.97, but not faster ones, whose frames would be dropped.
+qVideoPreferredFrameRate() computes it from the refresh rate of the
+window's screen, for every frame, and the preference is reset once it
+no longer applies, so it follows the window to other screens.
 
-The price is latency: alone on its display, the window is then shown
-on the grid of that rate, so a frame may wait up to one frame interval
-for it, instead of up to one refresh, and a frame arriving close to a
-tick may slip to the next one. 23.976 and 29.97 fps content shows about
-one frame in 1000 twice as long (every 42 and 33 seconds). That's why
-displays with a fixed refresh rate get no preference, as it would only
-delay frames there, and why a paused player's frames, which arrive when
-seeking, get none either.
+The price is latency: a frame waits for the next tick of that grid, up
+to one frame interval, instead of up to one refresh, and a frame that
+arrives after its tick waits for the next one, while the previous frame
+stays on screen for another frame interval (in one run under a heavy
+load, 7.6% of the updates, against 0.3% without). Measured from the
+update request to its delivery, with 24 fps on the 120 Hz panel: a
+median of 5 to 33 ms with FFmpeg, depending on where the frames fall on
+the grid, against 3 to 6 ms without this change, and 17 to 33 ms against
+9 ms with AVFoundation; from commit to display nothing changes. 23.976
+and 29.97 fps content shows about one frame in 1000 twice as long
+(every 42 and 33 seconds). That's why displays with a fixed refresh
+rate get no preference, as it would only delay frames there, and why a
+paused player's frames, which arrive when seeking, get none either.
 
 Only on macOS, where the preference paces update requests to the
 display (with vertical sync) and NSScreen tells a display with a
