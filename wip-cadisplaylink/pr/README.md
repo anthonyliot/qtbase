@@ -25,6 +25,10 @@ Review findings and the author's answers are kept in [review/](review/).
 | qtmultimedia | `wip/cadisplaylink` | `635067497` (dev) | git@github.com:anthonyliot/qtmultimedia.git |
 | qt5 | `wip/cadisplaylink` | dev | git@github.com:anthonyliot/qt5.git (submodule pointers only) |
 
+The Gerrit series are the branches `wip/cadisplaylink-gerrit` of qtbase, qtdeclarative and
+qtmultimedia, checked out in worktrees under `~/Desktop/bitbucket/qt5-series/` and pushed to the
+forks (below).
+
 Full diffs: `git -C qtbase diff 25d8223e59f..wip/cadisplaylink -- . ':!wip-cadisplaylink'`,
 `git -C qtdeclarative diff ec2f2fdea8..wip/cadisplaylink` and
 `git -C qtmultimedia diff 635067497..wip/cadisplaylink`.
@@ -81,7 +85,9 @@ see [TESTING.md](TESTING.md). Documents: [series/](series/).
 ### qtmultimedia (review rounds 4 to 14)
 
 The qtmultimedia branch is itself the series (no WIP commits): six commits on `635067497`, each
-built and tested at its own state (TESTING.md, "Series states"). Their trees are recorded in
+built and tested at its own state (TESTING.md, "Series states"). Like qtbase and qtdeclarative, it
+also has `wip/cadisplaylink-gerrit` (worktree `qt5-series/qtmultimedia`, pushed to the fork),
+on the same commits; `finish.sh` keeps it there. Their trees are recorded in
 `qtmultimedia-series/trees.txt` (and kept from `git gc` by `refs/cadisplaylink/series/S1..S6` in
 qtmultimedia), messages in `qtmultimedia-series/M{1..6}.txt`, and
 `qtmultimedia-series/commit-series.sh` commits them signed, refusing a tree that differs from the
